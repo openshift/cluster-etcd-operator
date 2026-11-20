@@ -1,6 +1,16 @@
 # promtool rule unit tests for backup alerts.
 # Uses realistic scrape labels (job/instance) to catch default vector-matching bugs.
 #
+# Duplicate-target and rollout groups model more than one operator pod exporting
+# the same objects: every target exports each series the collectors would export
+# for the objects in the scenario. That means etcd_backup_info, all three
+# etcd_backup_status series (at most one is 1), the creation timestamp, the
+# completion timestamp once a backup has finished, and the policy creation
+# timestamp and schedule interval. The only exceptions are deliberate: missing
+# intervals, cache skew (including a backup observed by only one pod), rollout
+# start/stop windows and recreated UIDs. etcd_backup_policy_info and
+# etcd_backup_size_bytes are omitted because no rule reads them.
+#
 # Run via: hack/test-backup-alerts.sh
 rule_files:
   - backup_alerts_rules_for_test.yaml
@@ -132,17 +142,38 @@ tests:
   # Duplicate targets: two operator pods export the same policy (same UID) while
   # both are visible in the lookback window. Joins must deduplicate by logical
   # object instead of failing with many-to-many / duplicate-series errors, and
-  # the policy must alert once (not once per target).
+  # the policy must alert once (not once per target). Backup b1 starts at 49h and
+  # is still Running (no completion timestamp), so it is not a success.
   - interval: 1h
     input_series:
       - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
         values: "1+0x55"
       - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
         values: "86400+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "_x49 1+0x6"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "_x49 1+0x6"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "_x49 0+0x6"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "_x49 0+0x6"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
+        values: "_x49 176400+0x6"
       - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
         values: "1+0x55"
       - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
         values: "86400+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "_x49 1+0x6"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "_x49 1+0x6"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "_x49 0+0x6"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "_x49 0+0x6"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
+        values: "_x49 176400+0x6"
     alert_rule_test:
       - eval_time: 26h
         alertname: etcdBackupPolicyNoRecentSuccess
@@ -162,17 +193,38 @@ tests:
 
   # Rollout overlap: the outgoing pod's series stop (stale) at 52h, the incoming
   # pod's series start at 46h. The alert evaluates during the overlap and keeps
-  # the same identity once only the new pod reports.
+  # the same identity once only the new pod reports. Backup b1 starts at 49h and
+  # is still Running on both pods, so it is not a success.
   - interval: 1h
     input_series:
       - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup_policy="daily",uid="uid-1"}'
         values: "1+0x51 stale"
       - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup_policy="daily",uid="uid-1"}'
         values: "86400+0x51 stale"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "_x49 1+0x2 stale"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "_x49 1+0x2 stale"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "_x49 0+0x2 stale"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "_x49 0+0x2 stale"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1"}'
+        values: "_x49 176400+0x2 stale"
       - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup_policy="daily",uid="uid-1"}'
         values: "_x46 1+0x9"
       - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup_policy="daily",uid="uid-1"}'
         values: "_x46 86400+0x9"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "_x49 1+0x6"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "_x49 1+0x6"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "_x49 0+0x6"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "_x49 0+0x6"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1"}'
+        values: "_x49 176400+0x6"
     alert_rule_test:
       # Overlap, age < 48h → silent.
       - eval_time: 47h
@@ -218,6 +270,12 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
         values: "176400+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
+        values: "175800+0x55"
       - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
         values: "1+0x55"
       - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
@@ -228,6 +286,12 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
         values: "176400+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
+        values: "175800+0x55"
     alert_rule_test:
       - eval_time: 50h
         alertname: etcdBackupPolicyNoRecentSuccess
@@ -246,6 +310,12 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
         values: "100+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
+        values: "0+0x55"
       - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
         values: "1+0x55"
       - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
@@ -256,6 +326,12 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
         values: "100+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
+        values: "0+0x55"
     alert_rule_test:
       - eval_time: 50h
         alertname: etcdBackupPolicyNoRecentSuccess
@@ -306,12 +382,24 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
         values: "100+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
+        values: "0+0x55"
       - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
         values: "1+0x55"
       - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
         values: "100+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
+        values: "0+0x55"
       # twice-daily: recent success at ≈49h.
       - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2",etcd_backup_policy="twice-daily",node="master-1",storage_type="PVC",storage_location="backup-pvc"}'
         values: "1+0x55"
@@ -319,12 +407,24 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2"}'
         values: "176400+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2"}'
+        values: "175800+0x55"
       - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2",etcd_backup_policy="twice-daily",node="master-1",storage_type="PVC",storage_location="backup-pvc"}'
         values: "1+0x55"
       - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2",status="Completed"}'
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2"}'
         values: "176400+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2"}'
+        values: "175800+0x55"
     alert_rule_test:
       - eval_time: 50h
         alertname: etcdBackupPolicyNoRecentSuccess
@@ -342,7 +442,8 @@ tests:
   # Policy recreated with the same name: an outgoing pod still exports the old
   # UID while the new pod exports the new UID. Backups associate with policies
   # by name, so a recent Completed backup suppresses both UIDs; matching by name
-  # must not fail because two policy UIDs share it.
+  # must not fail because two policy UIDs share it. Only the incoming pod has
+  # observed backup b1, so the old UID is suppressed by another target's backup.
   - interval: 1h
     input_series:
       - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup_policy="daily",uid="uid-old"}'
@@ -359,6 +460,12 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1"}'
         values: "176400+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1"}'
+        values: "175800+0x55"
     alert_rule_test:
       - eval_time: 50h
         alertname: etcdBackupPolicyNoRecentSuccess
@@ -378,12 +485,24 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b4",uid="b-uid-4"}'
         values: "100+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b4",uid="b-uid-4",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b4",uid="b-uid-4",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b4",uid="b-uid-4"}'
+        values: "0+0x55"
       - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b4",uid="b-uid-4",etcd_backup_policy="custom",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
         values: "1+0x55"
       - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b4",uid="b-uid-4",status="Completed"}'
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b4",uid="b-uid-4"}'
         values: "100+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b4",uid="b-uid-4",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b4",uid="b-uid-4",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b4",uid="b-uid-4"}'
+        values: "0+0x55"
     alert_rule_test:
       - eval_time: 50h
         alertname: etcdBackupPolicyNoRecentSuccess
@@ -423,24 +542,60 @@ tests:
   # Completed-branch duration alert, duplicate targets: timestamp arithmetic
   # must deduplicate by backup identity and alert once. Same timestamps as the
   # single-target case: backup-1 ran 40m → fires; backup-2 ran 10m → silent.
+  # Both backups report Running until they complete at 40m, then Completed.
+  # While backup-1 is Running past 1800s, the Running branch also matches and
+  # fires once per target from 36m. It resolves at 40m, when Completed replaces
+  # Running, so it is not active at 44m or 50m.
   - interval: 1m
     input_series:
       - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
         values: "0+0x50"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
         values: "_x40 2400+0x10"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x50"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
+        values: "1+0x39 0+0x10"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Completed"}'
+        values: "0+0x39 1+0x10"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Failed"}'
+        values: "0+0x50"
       - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1"}'
         values: "0+0x50"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1"}'
         values: "_x40 2400+0x10"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x50"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
+        values: "1+0x39 0+0x10"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1",status="Completed"}'
+        values: "0+0x39 1+0x10"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1",status="Failed"}'
+        values: "0+0x50"
       - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2"}'
         values: "_x30 1800+0x20"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2"}'
         values: "_x40 2400+0x10"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2",node="master-1",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "_x30 1+0x20"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2",status="Running"}'
+        values: "_x30 1+0x9 0+0x10"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2",status="Completed"}'
+        values: "_x30 0+0x9 1+0x10"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2",status="Failed"}'
+        values: "_x30 0+0x20"
       - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2"}'
         values: "_x30 1800+0x20"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2"}'
         values: "_x40 2400+0x10"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2",node="master-1",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "_x30 1+0x20"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2",status="Running"}'
+        values: "_x30 1+0x9 0+0x10"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2",status="Completed"}'
+        values: "_x30 0+0x9 1+0x10"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2",status="Failed"}'
+        values: "_x30 0+0x20"
     alert_rule_test:
       # Completion series appear at 40m; the 5m hold has not elapsed at 44m.
       - eval_time: 44m
@@ -477,12 +632,24 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
         values: "100+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
+        values: "0+0x55"
       - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
         values: "1+0x55"
       - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
         values: "100+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
+        values: "0+0x55"
       # b2: recent Failed at ≈49h.
       - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2",etcd_backup_policy="daily",node="master-1",storage_type="PVC",storage_location="backup-pvc"}'
         values: "1+0x55"
@@ -492,6 +659,10 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2"}'
         values: "176400+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2"}'
+        values: "175800+0x55"
       - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2",etcd_backup_policy="daily",node="master-1",storage_type="PVC",storage_location="backup-pvc"}'
         values: "1+0x55"
       - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2",status="Completed"}'
@@ -500,6 +671,10 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2"}'
         values: "176400+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2"}'
+        values: "175800+0x55"
     alert_rule_test:
       - eval_time: 50h
         alertname: etcdBackupPolicyNoRecentSuccess
@@ -533,6 +708,10 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
         values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1"}'
+        values: "175800+0x55"
       - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
         values: "1+0x55"
       - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",status="Running"}'
@@ -541,6 +720,10 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1"}'
         values: "176400+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1"}'
+        values: "175800+0x55"
     alert_rule_test:
       - eval_time: 50h
         alertname: etcdBackupPolicyNoRecentSuccess
@@ -565,12 +748,24 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1"}'
         values: "100+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1"}'
+        values: "0+0x55"
       - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
         values: "1+0x55"
       - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1"}'
         values: "100+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1"}'
+        values: "0+0x55"
     alert_rule_test:
       - eval_time: 50h
         alertname: etcdBackupPolicyNoRecentSuccess
@@ -587,7 +782,8 @@ tests:
 
   # Duplicate targets disagree on the schedule interval (schedule changed from
   # daily to every two days; one target's cache is behind). The larger interval
-  # is used: silent at 50h (< 2*48h), fires at 100h.
+  # is used: silent at 50h (< 2*48h), fires at 100h. No EtcdBackup objects exist,
+  # so no backup series are exported.
   - interval: 1h
     input_series:
       - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
@@ -635,6 +831,10 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
         values: "176400+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
+        values: "175800+0x55"
       - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
         values: "1+0x55"
       - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
@@ -643,6 +843,10 @@ tests:
         values: "1+0x55"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
         values: "176400+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
+        values: "175800+0x55"
     alert_rule_test:
       - eval_time: 50h
         alertname: etcdBackupPolicyNoRecentSuccess
