@@ -546,7 +546,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			return fmt.Errorf("could not start backupController, aborting controller start: %w", err)
 		}
 
-		_, backupPolicyController := backuppolicycontroller.NewBackupPolicyController(
+		backupPolicyController := backuppolicycontroller.NewBackupPolicyController(
 			AlivenessChecker,
 			backupPoliciesLister,
 			cronJobsLister,
@@ -557,11 +557,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			featureGateAccessor,
 			etcdBackupPoliciesInformer.Informer(),
 			cronJobsInformer.Informer())
-
-		_ = backuppolicycontroller.NewBackupPolicyMetrics(
-			metricsRegistry,
-			backupPoliciesLister,
-		)
 
 		backupPolicyRetentionController, err := backuppolicycontroller.NewBackupPolicyRetentionController(
 			AlivenessChecker,

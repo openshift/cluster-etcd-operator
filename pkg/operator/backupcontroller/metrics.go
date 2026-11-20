@@ -18,7 +18,7 @@ const (
 	backupInfoMetricName           = "etcd_backup_info"
 	backupStatusMetricName         = "etcd_backup_status"
 	backupCompletionTimeMetricName = "etcd_backup_completion_timestamp_seconds"
-	backupCreationTimeMetricName   = "etcd_backup_creation_timestamp_seconds"
+	backupStartTimeMetricName      = "etcd_backup_start_timestamp_seconds"
 	backupSizeBytesMetricName      = "etcd_backup_size_bytes"
 
 	storageTypePVC   = "PVC"
@@ -40,7 +40,7 @@ type backupCollector struct {
 	infoDesc           *prometheus.Desc
 	statusDesc         *prometheus.Desc
 	completionTimeDesc *prometheus.Desc
-	creationTimeDesc   *prometheus.Desc
+	startTimeDesc      *prometheus.Desc
 	sizeBytesDesc      *prometheus.Desc
 }
 
@@ -67,8 +67,8 @@ func NewBackupMetrics(metricsRegistry metrics.KubeRegistry, backupsLister operat
 			[]string{"etcd_backup", "uid"},
 			nil,
 		),
-		creationTimeDesc: prometheus.NewDesc(
-			backupCreationTimeMetricName,
+		startTimeDesc: prometheus.NewDesc(
+			backupStartTimeMetricName,
 			"Unix timestamp when the backup was created.",
 			[]string{"etcd_backup", "uid"},
 			nil,
@@ -90,7 +90,7 @@ func (c *backupCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.infoDesc
 	ch <- c.statusDesc
 	ch <- c.completionTimeDesc
-	ch <- c.creationTimeDesc
+	ch <- c.startTimeDesc
 	ch <- c.sizeBytesDesc
 }
 
@@ -142,12 +142,12 @@ func (c *backupCollector) collectBackupMetrics(ch chan<- prometheus.Metric, back
 		)
 	}
 
-	// Emit creation time if available
-	if creationTime := getCreationTime(backup); creationTime > 0 {
+	// Emit start time if available
+	if startTime := getStartTime(backup); startTime > 0 {
 		ch <- prometheus.MustNewConstMetric(
-			c.creationTimeDesc,
+			c.startTimeDesc,
 			prometheus.GaugeValue,
-			creationTime,
+			startTime,
 			name, uid,
 		)
 	}
@@ -214,7 +214,7 @@ func extractCurrentStatus(backup operatorv1alpha1.EtcdBackup) string {
 	return ""
 }
 
-func getCreationTime(backup operatorv1alpha1.EtcdBackup) float64 {
+func getStartTime(backup operatorv1alpha1.EtcdBackup) float64 {
 	if backup.CreationTimestamp.IsZero() {
 		return 0
 	}
@@ -223,11 +223,7 @@ func getCreationTime(backup operatorv1alpha1.EtcdBackup) float64 {
 
 func getCompletionTime(backup operatorv1alpha1.EtcdBackup) float64 {
 	for _, condition := range backup.Status.Conditions {
-		if condition.Status != metav1.ConditionTrue {
-			continue
-		}
-		switch condition.Type {
-		case string(operatorv1alpha1.BackupCompleted), string(operatorv1alpha1.BackupFailed):
+		if condition.Status == metav1.ConditionTrue && condition.Type == string(operatorv1alpha1.BackupCompleted) {
 			return float64(condition.LastTransitionTime.Unix())
 		}
 	}
