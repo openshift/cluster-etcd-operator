@@ -1,7 +1,9 @@
 package operator
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"time"
 
@@ -18,6 +20,8 @@ const (
 	// Status collector runs every minute, so 5 minutes means we've missed ~5 consecutive updates.
 	pacemakerCRStalenessThreshold = 5 * time.Minute
 )
+
+var errNoReadyControlPlaneNodes = errors.New("no ready control plane nodes found")
 
 // getActivePacemakerNodes returns nodes eligible for job scheduling.
 // Returns K8s ∩ Pacemaker intersection (ready nodes only) if CR is fresh.
@@ -40,7 +44,7 @@ func (c *pacemakerLifecycleManager) getActivePacemakerNodes() ([]*corev1.Node, e
 	}
 
 	if len(readyNodes) == 0 {
-		return nil, fmt.Errorf("no ready control plane nodes found")
+		return nil, errNoReadyControlPlaneNodes
 	}
 
 	pacemakerNodes, pacemakerCR, err := c.getPacemakerNodesWithCR()
@@ -92,15 +96,21 @@ func (c *pacemakerLifecycleManager) getPacemakerNodesWithCR() (map[string]string
 		return nil, nil, fmt.Errorf("failed to convert to PacemakerCluster")
 	}
 
-	if pacemakerCR.Status.Nodes == nil {
+	if pacemakerCR.Status.Nodes == nil || len(*pacemakerCR.Status.Nodes) == 0 {
 		return nil, pacemakerCR, fmt.Errorf("PacemakerCluster CR has no nodes in status")
 	}
 
 	pmNodes := make(map[string]string)
 	for _, node := range *pacemakerCR.Status.Nodes {
-		if len(node.Addresses) == 0 {
-			klog.Warningf("Pacemaker node %q has no addresses in CR status - skipping (possible CR population race)", node.NodeName)
-			continue
+		if node.NodeName == "" || len(node.Addresses) == 0 {
+			return nil, pacemakerCR, fmt.Errorf("Pacemaker member %q has incomplete identity in CR status", node.NodeName)
+		}
+		ip := net.ParseIP(node.Addresses[0].Address)
+		if ip == nil || !ip.IsGlobalUnicast() {
+			return nil, pacemakerCR, fmt.Errorf("invalid Pacemaker member address %q", node.Addresses[0].Address)
+		}
+		if _, exists := pmNodes[node.NodeName]; exists {
+			return nil, pacemakerCR, fmt.Errorf("duplicate Pacemaker member %q", node.NodeName)
 		}
 		pmNodes[node.NodeName] = node.Addresses[0].Address
 	}

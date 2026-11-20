@@ -30,9 +30,6 @@ import (
 // SchedulableNodesFunc returns ready nodes where job can run (round-robin target).
 type SchedulableNodesFunc func() ([]*corev1.Node, error)
 
-// AffectedNodesFunc returns nodes that must be Ready before job admission (ready check target).
-type AffectedNodesFunc func() ([]*corev1.Node, error)
-
 // JobConfigFunc returns deterministic JSON for drift detection. Changes trigger job restart.
 type JobConfigFunc func() (string, error)
 
@@ -152,10 +149,10 @@ func manageNoSchedulableNodesBlockedCondition(jobName string, hasSchedulableNode
 	)
 }
 
-// checkNodesReadinessAndSetCondition checks if all nodes are ready and tracks blocked state with timeout.
+// AdmitReadyNodes checks if all nodes are ready and tracks blocked state with timeout.
 // Returns (true, nil) if all nodes ready, (false, nil) if some not ready but not timed out,
 // or (false, error) if nodes not ready > 10 min (triggers WithSyncDegradedOnError).
-func checkNodesReadinessAndSetCondition(nodes []*corev1.Node, jobName string) (bool, error) {
+func AdmitReadyNodes(nodes []*corev1.Node, jobName string) (bool, error) {
 	// Collect all not-ready nodes
 	var notReadyNodes []string
 
@@ -177,29 +174,10 @@ func checkNodesReadinessAndSetCondition(nodes []*corev1.Node, jobName string) (b
 	return true, nil
 }
 
-// syncMultiNodeJobState manages retry state for multi-node job (node changes, config drift, failures).
-// Detects drift and failures, updates retry state accordingly. Job deletion/recreation is handled
-// by ApplyJob via drift detection (NodeName changed), except for real config/node drift where
-// jobs are explicitly deleted before resetting state.
-func syncMultiNodeJobState(ctx context.Context, jobName string, schedulableNodesFunc SchedulableNodesFunc, affectedNodesFunc AffectedNodesFunc, jobConfigFunc JobConfigFunc, maxRetryAttempts int, kubeClient kubernetes.Interface, operatorClient v1helpers.StaticPodOperatorClient) error {
-	// Check affected nodes readiness before admitting/retrying job
-	if affectedNodesFunc != nil {
-		affectedNodes, err := affectedNodesFunc()
-		if err != nil {
-			return fmt.Errorf("failed to get affected nodes: %w", err)
-		}
-
-		// Check readiness and manage blocked condition
-		ready, err := checkNodesReadinessAndSetCondition(affectedNodes, jobName)
-		if err != nil {
-			return err
-		}
-		if !ready {
-			// Block job admission - nodes not ready yet
-			return nil
-		}
-	}
-
+// syncMultiNodeJobState updates placement and retries. Configuration changes
+// invalidate the current Job; changes to eligible executors only update retry
+// state so completed/running Jobs survive placement changes.
+func syncMultiNodeJobState(ctx context.Context, jobName string, schedulableNodesFunc SchedulableNodesFunc, jobConfigFunc JobConfigFunc, maxRetryAttempts int, kubeClient kubernetes.Interface, operatorClient v1helpers.StaticPodOperatorClient) error {
 	// Lock the global state map
 	// Check if state already exists before computing (fast path)
 	retryStateMutex.Lock()
@@ -286,25 +264,19 @@ func syncMultiNodeJobState(ctx context.Context, jobName string, schedulableNodes
 		configChanged = state.LastJobConfig != currentConfig
 	}
 
-	// If nodes or config changed, restart job
-	if nodesChanged || configChanged {
-		if nodesChanged {
-			klog.Infof("Job %s schedulable nodes changed from %v to %v - resetting retry state and deleting job",
-				jobName, state.TargetNodes, currentSchedulableNodes)
-		}
-		if configChanged {
-			klog.Infof("Job %s config changed - resetting retry state and deleting job. Old: %s, New: %s",
-				jobName, state.LastJobConfig, currentConfig)
-		}
+	// Only explicit configuration changes invalidate running/completed work.
+	if configChanged {
+		klog.Infof("Job %s config changed - resetting retry state and deleting job. Old: %s, New: %s",
+			jobName, state.LastJobConfig, currentConfig)
 
-		// Delete existing job if it exists (config drift or wrong target node)
+		// Delete existing job if it exists (explicit config drift)
 		_, err := kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Get(ctx, jobName, v1.GetOptions{})
 		if err == nil {
 			// Job exists - delete it so we can recreate with new config
 			if err := DeleteAndWait(ctx, kubeClient, jobName, operatorclient.TargetNamespace); err != nil {
-				return fmt.Errorf("failed to delete job %s after config/nodes changed: %w", jobName, err)
+				return fmt.Errorf("failed to delete job %s after config changed: %w", jobName, err)
 			}
-			klog.Infof("Deleted job %s after config/nodes changed", jobName)
+			klog.Infof("Deleted job %s after config changed", jobName)
 		} else if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to check for existing job %s: %w", jobName, err)
 		}
@@ -316,6 +288,23 @@ func syncMultiNodeJobState(ctx context.Context, jobName string, schedulableNodes
 		state.LastJobConfig = currentConfig
 
 		return nil
+	}
+
+	if nodesChanged {
+		// Rebase the cursor without invalidating the existing Job or restarting
+		// its retry budget. The next failed attempt uses the current candidates.
+		selected := ""
+		if state.NodeIndex < len(state.TargetNodes) {
+			selected = state.TargetNodes[state.NodeIndex]
+		}
+		state.TargetNodes = currentSchedulableNodes
+		state.NodeIndex = 0
+		for i, name := range currentSchedulableNodes {
+			if name == selected {
+				state.NodeIndex = i
+				break
+			}
+		}
 	}
 
 	// Get existing job (if any)
@@ -344,6 +333,22 @@ func syncMultiNodeJobState(ctx context.Context, jobName string, schedulableNodes
 
 		// Calculate next position
 		nextNodeIndex := currentNodeIndex + 1
+		failedNode := existingJob.Spec.Template.Spec.NodeName
+		if failedNode != "" {
+			failedIndex := -1
+			for i, name := range currentSchedulableNodes {
+				if name == failedNode {
+					failedIndex = i
+					break
+				}
+			}
+			if failedIndex < 0 {
+				// This also covers candidates refreshed while the Job was running.
+				nextNodeIndex = 0
+			} else if nodesChanged {
+				nextNodeIndex = failedIndex + 1
+			}
+		}
 		nextAttemptNumber := currentAttemptNumber
 
 		// Check if we've exhausted all nodes in this attempt
@@ -458,7 +463,17 @@ func RunNodeJobController(ctx context.Context, jobType tools.JobType, node *core
 		kubeClient,
 		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
 		conditions,
-		[]factory.Informer{},
+		[]factory.Informer{controlPlaneNodeInformer, kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer()},
+		func(_ context.Context, job *batchv1.Job) (bool, error) {
+			freshNode, err := nodeLister.Get(node.Name)
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			return AdmitReadyNodes([]*corev1.Node{freshNode}, job.Name)
+		},
 		[]JobHookFunc{
 			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) (bool, error) {
 				job.SetName(jobName)
@@ -475,20 +490,11 @@ func RunNodeJobController(ctx context.Context, jobType tools.JobType, node *core
 					return false, fmt.Errorf("failed to get node %s from informer: %w", node.Name, err)
 				}
 
-				// Check node readiness before configuring job
-				ready, err := checkNodesReadinessAndSetCondition([]*corev1.Node{freshNode}, job.Name)
-				if err != nil {
-					return false, err
-				}
-				if !ready {
-					klog.V(4).Infof("Skipping job %s creation: node %s not ready", job.Name, freshNode.Name)
-					return false, nil
-				}
-
 				// Configure node job: schedule on specific node, label with UID, set backoffLimit
 				// Use freshNode.UID to detect drift when node is replaced (same name, different UID)
 				job.Spec.Template.Spec.NodeName = freshNode.Name
 				job.Labels["node"] = string(freshNode.UID)
+				job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{Name: "TNF_NODE_UID", Value: string(freshNode.UID)})
 				job.Spec.BackoffLimit = ptr.To(int32(retries))
 
 				// Set image and command
@@ -511,7 +517,7 @@ func RunNodeJobController(ctx context.Context, jobType tools.JobType, node *core
 }
 
 // RunClusterJobController starts job controller for cluster-wide job with round-robin retry logic.
-func RunClusterJobController(ctx context.Context, jobType tools.JobType, schedulableNodesFunc SchedulableNodesFunc, affectedNodesFunc AffectedNodesFunc, jobConfigFunc JobConfigFunc, retries int, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, conditions []string) {
+func RunClusterJobController(ctx context.Context, jobType tools.JobType, schedulableNodesFunc SchedulableNodesFunc, createAdmissionHook JobCreateAdmissionHook, jobConfigFunc JobConfigFunc, retries int, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, conditions []string, optionalInformers ...factory.Informer) {
 	jobName := jobType.GetJobName(nil)
 
 	// Check if controller already running
@@ -534,14 +540,15 @@ func RunClusterJobController(ctx context.Context, jobType tools.JobType, schedul
 		kubeClient,
 		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
 		conditions,
-		[]factory.Informer{},
+		append([]factory.Informer{kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer()}, optionalInformers...),
+		createAdmissionHook,
 		[]JobHookFunc{
 			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) (bool, error) {
 				job.SetName(jobName)
 				job.Labels["app.kubernetes.io/name"] = jobType.GetNameLabelValue()
 
 				// Sync multi-node job state (handles transitions based on job status)
-				if err := syncMultiNodeJobState(ctx, job.Name, schedulableNodesFunc, affectedNodesFunc, jobConfigFunc, retries, kubeClient, operatorClient); err != nil {
+				if err := syncMultiNodeJobState(ctx, job.Name, schedulableNodesFunc, jobConfigFunc, retries, kubeClient, operatorClient); err != nil {
 					return false, err
 				}
 
@@ -585,7 +592,7 @@ func RestartClusterJobOrRunController(
 	ctx context.Context,
 	jobType tools.JobType,
 	schedulableNodesFunc SchedulableNodesFunc,
-	affectedNodesFunc AffectedNodesFunc,
+	createAdmissionHook JobCreateAdmissionHook,
 	jobConfigFunc JobConfigFunc,
 	retries int,
 	controllerContext *controllercmd.ControllerContext,
@@ -622,7 +629,7 @@ func RestartClusterJobOrRunController(
 	if !jobExists {
 		// No existing job - reset retry state to start fresh, then run controller
 		resetJobRetryState(jobName)
-		RunClusterJobController(ctx, jobType, schedulableNodesFunc, affectedNodesFunc, jobConfigFunc, retries, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, conditions)
+		RunClusterJobController(ctx, jobType, schedulableNodesFunc, createAdmissionHook, jobConfigFunc, retries, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, conditions)
 		return nil
 	}
 
@@ -642,7 +649,7 @@ func RestartClusterJobOrRunController(
 	resetJobRetryState(jobName)
 
 	// Run controller after cleanup completes (CEO might have been restarted)
-	RunClusterJobController(ctx, jobType, schedulableNodesFunc, affectedNodesFunc, jobConfigFunc, retries, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, conditions)
+	RunClusterJobController(ctx, jobType, schedulableNodesFunc, createAdmissionHook, jobConfigFunc, retries, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, conditions)
 
 	return nil
 }

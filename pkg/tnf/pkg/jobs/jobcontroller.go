@@ -53,6 +53,12 @@ const (
 //   - (false, error): Error occurred, set Degraded condition
 type JobHookFunc func(*opv1.OperatorSpec, *batchv1.Job) (bool, error)
 
+// JobCreateAdmissionHook permits creation of a proposed Job. It is evaluated
+// immediately before each API create, including replacements and retries.
+// Returning false, nil defers creation without reporting failure. Existing Jobs
+// are still observed and may be deleted for drift while creation is deferred.
+type JobCreateAdmissionHook func(context.Context, *batchv1.Job) (bool, error)
+
 // JobController is a generic controller that manages a job.
 //
 // This controller optionally produces the following conditions:
@@ -77,7 +83,8 @@ type JobController struct {
 	//   - If error is non-nil, sync fails and Degraded status is set to True
 	//   - If shouldApply is false, job creation is skipped (nodes not ready, etc.)
 	//   - If shouldApply is true, job is applied via ApplyJob
-	optionalJobHooks []JobHookFunc
+	optionalJobHooks    []JobHookFunc
+	createAdmissionHook JobCreateAdmissionHook
 	// errors contains any errors that occur during the configuration
 	// and setup of the JobController.
 	errors []error
@@ -95,6 +102,7 @@ func NewJobController(
 	jobInformer batchinformersv1.JobInformer,
 	conditions []string,
 	optionalInformers []factory.Informer,
+	createAdmissionHook JobCreateAdmissionHook,
 	optionalJobHooks ...JobHookFunc,
 ) factory.Controller {
 	c := NewJobControllerBuilder(
@@ -110,7 +118,7 @@ func NewJobController(
 		optionalInformers...,
 	).WithJobHooks(
 		optionalJobHooks...,
-	)
+	).WithCreateAdmissionHook(createAdmissionHook)
 
 	controller, err := c.ToController()
 	if err != nil {
@@ -151,6 +159,12 @@ func (c *JobController) WithExtraInformers(informers ...factory.Informer) *JobCo
 // These hooks can perform operations or modifications at specific points in the Job.
 func (c *JobController) WithJobHooks(hooks ...JobHookFunc) *JobController {
 	c.optionalJobHooks = hooks
+	return c
+}
+
+// WithCreateAdmissionHook sets the optional guard for API creation.
+func (c *JobController) WithCreateAdmissionHook(hook JobCreateAdmissionHook) *JobController {
+	c.createAdmissionHook = hook
 	return c
 }
 
@@ -234,7 +248,6 @@ func (c *JobController) sync(ctx context.Context, syncContext factory.SyncContex
 
 func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSpec, opStatus *opv1.OperatorStatus, syncContext factory.SyncContext) error {
 	klog.V(4).Infof("syncManaged")
-
 	required, err := c.getJob(opSpec)
 	if err != nil {
 		return preserveMaxRetriesOnReturn(c.instanceName, err, "hook error", opStatus)
@@ -252,9 +265,15 @@ func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSp
 		syncContext.Recorder(),
 		required,
 		ExpectedJobGeneration(required, opStatus.Generations),
+		c.admitJobCreation,
 	)
 	if err != nil {
 		return preserveMaxRetriesOnReturn(c.instanceName, err, "ApplyJob error", opStatus)
+	}
+
+	if job == nil {
+		// Preserve existing status while Job creation is deferred.
+		return preserveMaxRetriesOnReturn(c.instanceName, nil, "creation deferred", opStatus)
 	}
 
 	// Auto-recovery: delete jobs stuck in Failed state for > 10 minutes
@@ -369,6 +388,24 @@ func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSp
 
 	// Job complete - actual success, don't preserve degraded conditions
 	return nil
+}
+
+// admitJobCreation prevents replacement from overlapping surviving Pods of the
+// same Job name, then evaluates the job-specific policy using current state.
+func (c *JobController) admitJobCreation(ctx context.Context, job *batchv1.Job) (bool, error) {
+	pods, err := c.kubeClient.CoreV1().Pods(job.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + job.Name})
+	if err != nil {
+		return false, err
+	}
+	for _, pod := range pods.Items {
+		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+			return false, nil
+		}
+	}
+	if c.createAdmissionHook == nil {
+		return true, nil
+	}
+	return c.createAdmissionHook(ctx, job)
 }
 
 func (c *JobController) syncDeleting(ctx context.Context, opSpec *opv1.OperatorSpec, opStatus *opv1.OperatorStatus, syncContext factory.SyncContext) error {

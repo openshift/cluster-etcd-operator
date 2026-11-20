@@ -62,7 +62,7 @@ func ReadCronJobV1OrDie(objBytes []byte) *batchv1.CronJob {
 // attempt labels) is ignored to prevent recreation on operator restart when retry state
 // is reinitialized.
 func ApplyJob(ctx context.Context, client batchclientv1.JobsGetter, recorder events.Recorder,
-	requiredOriginal *batchv1.Job, expectedGeneration int64) (*batchv1.Job, bool, error) {
+	requiredOriginal *batchv1.Job, expectedGeneration int64, admissionHooks ...JobCreateAdmissionHook) (*batchv1.Job, bool, error) {
 
 	required := requiredOriginal.DeepCopy()
 	err := resourceapply.SetSpecHashAnnotation(&required.ObjectMeta, required.Spec)
@@ -72,6 +72,18 @@ func ApplyJob(ctx context.Context, client batchclientv1.JobsGetter, recorder eve
 
 	existing, err := client.Jobs(required.Namespace).Get(ctx, required.Name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
+		for _, hook := range admissionHooks {
+			if hook == nil {
+				continue
+			}
+			allowed, err := hook(ctx, required)
+			if err != nil {
+				return nil, false, fmt.Errorf("job creation admission: %w", err)
+			}
+			if !allowed {
+				return nil, false, nil
+			}
+		}
 		actual, err := client.Jobs(required.Namespace).Create(ctx, required, metav1.CreateOptions{})
 		resourcehelper.ReportCreateEvent(recorder, required, err)
 		return actual, true, nil
