@@ -17,6 +17,7 @@ import (
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/clock"
 )
 
 // RotatedSigningCASecret rotates a self-signed signing CA stored in a secret. It creates a new one when
@@ -55,6 +56,13 @@ type RotatedSigningCASecret struct {
 	// PKIProfileProvider, when non-nil, enables ConfigurablePKI certificate
 	// key algorithm resolution. When nil, legacy certificate generation is used.
 	PKIProfileProvider pki.PKIProfileProvider
+
+	// Clock, when set, is used for all time reads: rotation thresholds,
+	// expiry checks, and certificate validity on both the PKI and legacy
+	// generation paths. When nil, the real system clock is used.
+	// To drive a whole controller with a fake clock, set Clock on all
+	// rotation components (signer, CA bundle, target, and target cert creator).
+	Clock clock.PassiveClock
 
 	// Plumbing:
 	Informer      corev1informers.SecretInformer
@@ -158,13 +166,14 @@ func ensureOwnerReference(meta *metav1.ObjectMeta, owner *metav1.OwnerReference)
 }
 
 func (c RotatedSigningCASecret) needNewSigningCertKeyPair(secret *corev1.Secret) (bool, string) {
+	now := certrotationClock(c.Clock).Now()
 	annotations := secret.Annotations
 	notBefore, notAfter, reason := getValidityFromAnnotations(annotations)
 	if len(reason) > 0 {
 		return true, reason
 	}
 
-	if time.Now().After(notAfter) {
+	if now.After(notAfter) {
 		return true, "already expired"
 	}
 
@@ -174,12 +183,12 @@ func (c RotatedSigningCASecret) needNewSigningCertKeyPair(secret *corev1.Secret)
 
 	validity := notAfter.Sub(notBefore)
 	at80Percent := notAfter.Add(-validity / 5)
-	if time.Now().After(at80Percent) {
+	if now.After(at80Percent) {
 		return true, fmt.Sprintf("past refresh time (80%% of validity): %v", at80Percent)
 	}
 
 	developerSpecifiedRefresh := notBefore.Add(c.Refresh)
-	if time.Now().After(developerSpecifiedRefresh) {
+	if now.After(developerSpecifiedRefresh) {
 		return true, fmt.Sprintf("past its refresh time %v", developerSpecifiedRefresh)
 	}
 
@@ -248,7 +257,8 @@ func (c RotatedSigningCASecret) setSigningCertKeyPairSecretAndTLSAnnotations(sig
 
 // setSigningCertKeyPairSecret creates a new signing cert/key pair and sets them in the secret.
 func (c RotatedSigningCASecret) setSigningCertKeyPairSecret(signingCertKeyPairSecret *corev1.Secret) (*crypto.TLSCertificateConfig, error) {
-	signerName := fmt.Sprintf("%s_%s@%d", signingCertKeyPairSecret.Namespace, signingCertKeyPairSecret.Name, time.Now().Unix())
+	clk := certrotationClock(c.Clock)
+	signerName := fmt.Sprintf("%s_%s@%d", signingCertKeyPairSecret.Namespace, signingCertKeyPairSecret.Name, clk.Now().Unix())
 
 	var ca *crypto.TLSCertificateConfig
 	var err error
@@ -258,7 +268,7 @@ func (c RotatedSigningCASecret) setSigningCertKeyPairSecret(signingCertKeyPairSe
 			return nil, err
 		}
 		if keyGen != nil {
-			ca, err = crypto.NewSigningCertificate(signerName, keyGen, crypto.WithLifetime(c.Validity))
+			ca, err = crypto.NewSigningCertificate(signerName, keyGen, crypto.WithLifetime(c.Validity), crypto.WithClock(clk))
 			if err != nil {
 				return nil, err
 			}
@@ -266,7 +276,9 @@ func (c RotatedSigningCASecret) setSigningCertKeyPairSecret(signingCertKeyPairSe
 		// nil keyGen means Unmanaged: fall through to legacy cert generation
 	}
 	if ca == nil {
-		ca, err = crypto.MakeSelfSignedCAConfigForDuration(signerName, c.Validity)
+		// "Unsafe" only because it takes an arbitrary currentTime; the time
+		// source here is the same clock (c.Clock) used for rotation decisions.
+		ca, err = crypto.UnsafeMakeSelfSignedCAConfigForDurationAtTime(signerName, clk.Now, c.Validity)
 	}
 	if err != nil {
 		return nil, err
