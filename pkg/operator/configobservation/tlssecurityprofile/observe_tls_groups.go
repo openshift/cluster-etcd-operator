@@ -9,34 +9,32 @@ import (
 )
 
 var (
-	minTLSVersionPath = []string{"servingInfo", "minTLSVersion"}
-	cipherSuitesPath  = []string{"servingInfo", "cipherSuites"}
-	groupsPath        = []string{"servingInfo", "groups"}
+	minTLSVersionPath    = []string{"servingInfo", "minTLSVersion"}
+	cipherSuitesPath     = []string{"servingInfo", "cipherSuites"}
+	curvePreferencesPath = []string{"servingInfo", "curvePreferences"}
 )
 
 // ObserveTLSSecurityProfile observes the cluster TLS profile into observedConfig.
 //
 // Cipher suites and the minimum TLS version always come from library-go.
-// Groups are included only while TLSGroupPreferences is enabled. Named profiles
-// carry default groups, so observing them while the gate is off would change
-// etcd curve selection for every cluster. library-go applies its FIPS group
-// allowlist when groups are observed.
+// Curve preferences (converted from TLS groups) are included only while
+// TLSGroupPreferences is enabled. Named profiles carry default groups, so
+// observing them while the gate is off would change etcd curve selection for
+// every cluster. library-go applies its FIPS group allowlist when groups are
+// observed and converts them to curve preference IDs for etcd.
 func ObserveTLSSecurityProfile(accessor featuregates.FeatureGateAccess) configobserver.ObserveConfigFunc {
 	return func(genericListers configobserver.Listers, recorder events.Recorder, existingConfig map[string]any) (map[string]any, []error) {
 		enabled, err := tlshelpers.TLSGroupPreferencesEnabled(accessor)
 		if err != nil {
-			return configobserver.Pruned(existingConfig, minTLSVersionPath, cipherSuitesPath, groupsPath), []error{err}
+			return configobserver.Pruned(existingConfig, minTLSVersionPath, cipherSuitesPath, curvePreferencesPath), []error{err}
 		}
 		if !enabled {
 			return libgoapiserver.ObserveTLSSecurityProfile(genericListers, recorder, existingConfig)
 		}
-		return libgoapiserver.ObserveTLSSecurityProfileWithGroupPaths(
+		return libgoapiserver.ObserveTLSSecurityProfileWithGroupsConversion(
 			genericListers,
 			recorder,
 			existingConfig,
-			minTLSVersionPath,
-			cipherSuitesPath,
-			groupsPath,
 		)
 	}
 }
