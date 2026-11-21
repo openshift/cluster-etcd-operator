@@ -51,6 +51,10 @@ func (g RSAKeyPairGenerator) GenerateKeyPair() (crypto.PublicKey, crypto.Private
 	return &privateKey.PublicKey, privateKey, nil
 }
 
+func (g RSAKeyPairGenerator) Algorithm() string {
+	return fmt.Sprintf("RSA-%d", g.Bits)
+}
+
 // ECDSAKeyPairGenerator generates ECDSA key pairs.
 type ECDSAKeyPairGenerator struct {
 	// Curve is the named ECDSA curve.
@@ -80,6 +84,10 @@ func (g ECDSAKeyPairGenerator) ellipticCurve() (elliptic.Curve, error) {
 	default:
 		return nil, fmt.Errorf("unsupported ECDSA curve: %q", g.Curve)
 	}
+}
+
+func (g ECDSAKeyPairGenerator) Algorithm() string {
+	return fmt.Sprintf("ECDSA-%s", g.Curve)
 }
 
 // KeyUsageForPublicKey returns the x509.KeyUsage flags appropriate for the

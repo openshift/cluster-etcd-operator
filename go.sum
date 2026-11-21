@@ -46,6 +46,8 @@ github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkp
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/emicklei/go-restful/v3 v3.13.0 h1:C4Bl2xDndpU6nJ4bc1jXd+uTmYPVUwkD6bFY/oTyCes=
 github.com/emicklei/go-restful/v3 v3.13.0/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
+github.com/everettraven/openshift-library-go v0.0.0-20261111202512-0e316fc9acd7 h1:K4fFmT4VPDKHOI01B6ePxibLZJg96KQipaWUEScmbpo=
+github.com/everettraven/openshift-library-go v0.0.0-20261111202512-0e316fc9acd7/go.mod h1:SOmIJLGV4ubkJnA2rXH0M5davuY1QpattP3zotdIY3E=
 github.com/fatih/color v1.19.0 h1:Zp3PiM21/9Ld6FzSKyL5c/BULoe/ONr9KlbYVOfG8+w=
 github.com/fatih/color v1.19.0/go.mod h1:zNk67I0ZUT1bEGsSGyCZYZNrHuTkJJB+r6Q9VuMi0LE=
 github.com/felixge/fgprof v0.9.3/go.mod h1:RdbpDgzqYVh/T9fPELJyV7EYJuHB55UTEULNun8eiPw=
@@ -192,8 +194,6 @@ github.com/openshift/build-machinery-go v0.0.0-20260625204636-d138cd032dd0 h1:q8
 github.com/openshift/build-machinery-go v0.0.0-20260625204636-d138cd032dd0/go.mod h1:8jcm8UPtg2mCAsxfqKil1xrmRMI3a+XU2TZ9fF8A7TE=
 github.com/openshift/client-go v0.0.0-20261109191322-505de3dc15d7 h1:vCHmeOhlE9nXBMSsOmH2/mxrAGBmyJ0IOlywALQGzrw=
 github.com/openshift/client-go v0.0.0-20261109191322-505de3dc15d7/go.mod h1:iXbWwV8wHiQpPucLemE9vFlBQH540BnOh1+FpVpSD6g=
-github.com/openshift/library-go v0.0.0-20261023110741-4d8048669d74 h1:s8xJVCPQ2lqKPrWr/vG2AMIpzfb5OaKZfvl+SOPkpqs=
-github.com/openshift/library-go v0.0.0-20261023110741-4d8048669d74/go.mod h1:JOJKlqc8fqB/I632V61geb80zImgXC8FEQR3jn2/syI=
 github.com/openshift/onsi-ginkgo/v2 v2.6.1-0.20241205171354-8006f302fd12 h1:AKx/w1qpS8We43bsRgf8Nll3CGlDHpr/WAXvuedTNZI=
 github.com/openshift/onsi-ginkgo/v2 v2.6.1-0.20241205171354-8006f302fd12/go.mod h1:7Du3c42kxCUegi0IImZ1wUQzMBVecgIHjR1C+NkhLQo=
 github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde/go.mod h1:nZgzbfBr3hhjoZnS66nKrHmduYNpc34ny7RK4z5/HM0=

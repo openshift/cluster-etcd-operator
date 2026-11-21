@@ -519,7 +519,7 @@ func checkCertNodeValidity(t *testing.T, node corev1.Node, certName, keyName str
 	for _, name := range names {
 		for _, cert := range cfg.Certs {
 			if len(cert.ExtKeyUsage) > 0 {
-				require.Equal(t, expectedUsages, cert.ExtKeyUsage)
+				require.ElementsMatch(t, expectedUsages, cert.ExtKeyUsage)
 				require.Containsf(t, cert.DNSNames, name, "expected node %s to have DNS name %s, but only had: %v", node.Name, name, cert.DNSNames)
 			}
 		}

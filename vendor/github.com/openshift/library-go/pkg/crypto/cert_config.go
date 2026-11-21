@@ -2,18 +2,51 @@ package crypto
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
-	"time"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/authentication/user"
+	"k8s.io/utils/clock"
 )
 
 // KeyPairGenerator generates a cryptographic key pair.
 type KeyPairGenerator interface {
 	GenerateKeyPair() (crypto.PublicKey, crypto.PrivateKey, error)
+	Algorithm() string
+}
+
+func NewStaticKeyPairGenerator(privateKey crypto.PrivateKey) KeyPairGenerator {
+	skpg := &StaticKeyPairGenerator{}
+
+	switch pk := privateKey.(type) {
+	case *rsa.PrivateKey:
+		skpg.privateKey = pk
+		skpg.publicKey = pk.Public()
+	case *ecdsa.PrivateKey:
+		skpg.privateKey = pk
+		skpg.publicKey = pk.Public()
+	default:
+		panic(fmt.Sprintf("unsupported private key type %T", privateKey))
+	}
+
+	return skpg
+}
+
+type StaticKeyPairGenerator struct {
+	privateKey crypto.PrivateKey
+	publicKey  crypto.PublicKey
+}
+
+func (skpg *StaticKeyPairGenerator) GenerateKeyPair() (crypto.PublicKey, crypto.PrivateKey, error) {
+	return skpg.publicKey, skpg.privateKey, nil
+}
+
+func (skpg *StaticKeyPairGenerator) Algorithm() string {
+	return KeyAlgorithmForPrivateKey(skpg.privateKey)
 }
 
 // NewSigningCertificate creates a CA certificate.
@@ -24,6 +57,7 @@ type KeyPairGenerator interface {
 func NewSigningCertificate(name string, keyGen KeyPairGenerator, opts ...CertificateOption) (*TLSCertificateConfig, error) {
 	o := &CertificateOptions{
 		lifetime: DefaultCACertificateLifetimeDuration,
+		clock:    clock.RealClock{},
 	}
 	for _, opt := range opts {
 		opt(o)
@@ -46,7 +80,7 @@ func NewSigningCertificate(name string, keyGen KeyPairGenerator, opts ...Certifi
 	if o.signer != nil {
 		// Intermediate CA signed by the provided signer.
 		authorityKeyId := o.signer.Config.Certs[0].SubjectKeyId
-		template := newSigningCertificateTemplateForDuration(subject, o.lifetime, time.Now, authorityKeyId, subjectKeyId)
+		template := newSigningCertificateTemplateForDuration(subject, o.lifetime, o.clock.Now, authorityKeyId, subjectKeyId)
 		template.SignatureAlgorithm = 0
 		template.KeyUsage = KeyUsageForPublicKey(publicKey) | x509.KeyUsageCertSign
 
@@ -62,7 +96,7 @@ func NewSigningCertificate(name string, keyGen KeyPairGenerator, opts ...Certifi
 	}
 
 	// Self-signed root CA. AuthorityKeyId and SubjectKeyId match.
-	template := newSigningCertificateTemplateForDuration(subject, o.lifetime, time.Now, subjectKeyId, subjectKeyId)
+	template := newSigningCertificateTemplateForDuration(subject, o.lifetime, o.clock.Now, subjectKeyId, subjectKeyId)
 	template.SignatureAlgorithm = 0
 	template.KeyUsage = KeyUsageForPublicKey(publicKey) | x509.KeyUsageCertSign
 
@@ -82,6 +116,7 @@ func NewSigningCertificate(name string, keyGen KeyPairGenerator, opts ...Certifi
 func (ca *CA) NewServerCertificate(hostnames sets.Set[string], keyGen KeyPairGenerator, opts ...CertificateOption) (*TLSCertificateConfig, error) {
 	o := &CertificateOptions{
 		lifetime: DefaultCertificateLifetimeDuration,
+		clock:    clock.RealClock{},
 	}
 	for _, opt := range opts {
 		opt(o)
@@ -102,7 +137,7 @@ func (ca *CA) NewServerCertificate(hostnames sets.Set[string], keyGen KeyPairGen
 		pkix.Name{CommonName: sortedHostnames[0]},
 		sortedHostnames,
 		o.lifetime,
-		time.Now,
+		o.clock.Now,
 		authorityKeyId,
 		subjectKeyId,
 	)
@@ -132,6 +167,7 @@ func (ca *CA) NewServerCertificate(hostnames sets.Set[string], keyGen KeyPairGen
 func (ca *CA) NewClientCertificate(u user.Info, keyGen KeyPairGenerator, opts ...CertificateOption) (*TLSCertificateConfig, error) {
 	o := &CertificateOptions{
 		lifetime: DefaultCertificateLifetimeDuration,
+		clock:    clock.RealClock{},
 	}
 	for _, opt := range opts {
 		opt(o)
@@ -147,7 +183,7 @@ func (ca *CA) NewClientCertificate(u user.Info, keyGen KeyPairGenerator, opts ..
 	}
 
 	authorityKeyId := ca.Config.Certs[0].SubjectKeyId
-	template := NewClientCertificateTemplateForDuration(UserToSubject(u), o.lifetime, time.Now)
+	template := NewClientCertificateTemplateForDuration(UserToSubject(u), o.lifetime, o.clock.Now)
 	template.AuthorityKeyId = authorityKeyId
 	template.SubjectKeyId = subjectKeyId
 	// Let x509.CreateCertificate auto-detect the signature algorithm from the CA's key.
@@ -159,8 +195,26 @@ func (ca *CA) NewClientCertificate(u user.Info, keyGen KeyPairGenerator, opts ..
 		return nil, fmt.Errorf("failed to sign certificate: %w", err)
 	}
 
+	// client certificates do not need to contain the entire certificate chain
+	// like serving certificates do. That being said, to support the cross-signing
+	// behaviors we do need to include any intermediate certificates beyond
+	// the root CA certificate for the client certificate.
+	// Verifiers of client certificates should already have the root CA certificate for the old
+	// signing certificate in their trust store.
+	// "intermediate certificates" in this case are any non-self-signed CA certificates.
+
+	certs := []*x509.Certificate{cert}
+
+	for _, c := range ca.Config.Certs {
+		if c.IsCA == true && c.CheckSignatureFrom(c) == nil {
+			continue
+		}
+
+		certs = append(certs, c)
+	}
+
 	return &TLSCertificateConfig{
-		Certs: append([]*x509.Certificate{cert}, ca.Config.Certs...),
+		Certs: certs,
 		Key:   privateKey,
 	}, nil
 }
@@ -171,6 +225,7 @@ func (ca *CA) NewClientCertificate(u user.Info, keyGen KeyPairGenerator, opts ..
 func (ca *CA) NewPeerCertificate(hostnames sets.Set[string], u user.Info, keyGen KeyPairGenerator, opts ...CertificateOption) (*TLSCertificateConfig, error) {
 	o := &CertificateOptions{
 		lifetime: DefaultCertificateLifetimeDuration,
+		clock:    clock.RealClock{},
 	}
 	for _, opt := range opts {
 		opt(o)
@@ -193,7 +248,7 @@ func (ca *CA) NewPeerCertificate(hostnames sets.Set[string], u user.Info, keyGen
 		pkix.Name{CommonName: sortedHostnames[0]},
 		sortedHostnames,
 		o.lifetime,
-		time.Now,
+		o.clock.Now,
 		authorityKeyId,
 		subjectKeyId,
 	)

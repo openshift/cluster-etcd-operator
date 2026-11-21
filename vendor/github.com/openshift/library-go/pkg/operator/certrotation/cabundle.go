@@ -17,6 +17,7 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/util/cert"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/clock"
 
 	"github.com/openshift/library-go/pkg/certs"
 	"github.com/openshift/library-go/pkg/crypto"
@@ -27,22 +28,48 @@ import (
 // CABundleConfigMap maintains a CA bundle config map, by adding new CA certs coming from RotatedSigningCASecret, and by removing expired old ones.
 type CABundleConfigMap struct {
 	// Namespace is the namespace of the ConfigMap to maintain.
-	Namespace string
+	namespace string
 	// Name is the name of the ConfigMap to maintain.
-	Name string
+	name string
 	// RefreshOnlyWhenExpired set to true means to ignore 80% of validity and the Refresh duration for rotation,
 	// but only rotate when the certificate expires. This is useful for auto-recovery when we want to enforce
 	// rotation on expiration only, but not interfere with the ordinary rotation controller.
-	RefreshOnlyWhenExpired bool
+	refreshOnlyWhenExpired bool
 	// Owner is an optional reference to add to the secret that this rotator creates.
-	Owner *metav1.OwnerReference
+	owner *metav1.OwnerReference
 	// AdditionalAnnotations is a collection of annotations set for the secret
-	AdditionalAnnotations AdditionalAnnotations
+	additionalAnnotations AdditionalAnnotations
 	// Plumbing:
-	Informer      corev1informers.ConfigMapInformer
-	Lister        corev1listers.ConfigMapLister
-	Client        corev1client.ConfigMapsGetter
-	EventRecorder events.Recorder
+	informer      corev1informers.ConfigMapInformer
+	lister        corev1listers.ConfigMapLister
+	client        corev1client.ConfigMapsGetter
+	eventRecorder events.Recorder
+
+	clock clock.PassiveClock
+}
+
+func NewCABundleConfigMap(
+	namespace string,
+	name string,
+	refreshOnlyWhenExpired bool,
+	owner *metav1.OwnerReference,
+	additionalAnnotations AdditionalAnnotations,
+	informer corev1informers.ConfigMapInformer,
+	client corev1client.ConfigMapsGetter,
+	eventRecorder events.Recorder,
+) CABundleConfigMap {
+	return CABundleConfigMap{
+		name:                   name,
+		namespace:              namespace,
+		refreshOnlyWhenExpired: refreshOnlyWhenExpired,
+		owner:                  owner,
+		additionalAnnotations:  additionalAnnotations,
+		informer:               informer,
+		lister:                 informer.Lister(),
+		client:                 client,
+		eventRecorder:          eventRecorder,
+		clock:                  clock.RealClock{},
+	}
 }
 
 func (c CABundleConfigMap) EnsureConfigMapCABundle(ctx context.Context, signingCertKeyPair *crypto.CA, signingCertKeyPairLocation string) ([]*x509.Certificate, error) {
@@ -51,7 +78,7 @@ func (c CABundleConfigMap) EnsureConfigMapCABundle(ctx context.Context, signingC
 	updateRequired := false
 	creationRequired := false
 
-	originalCABundleConfigMap, err := c.Lister.ConfigMaps(c.Namespace).Get(c.Name)
+	originalCABundleConfigMap, err := c.lister.ConfigMaps(c.namespace).Get(c.name)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return nil, err
 	}
@@ -59,24 +86,24 @@ func (c CABundleConfigMap) EnsureConfigMapCABundle(ctx context.Context, signingC
 	if apierrors.IsNotFound(err) {
 		// create an empty one
 		caBundleConfigMap = &corev1.ConfigMap{ObjectMeta: NewTLSArtifactObjectMeta(
-			c.Name,
-			c.Namespace,
-			c.AdditionalAnnotations,
+			c.name,
+			c.namespace,
+			c.additionalAnnotations,
 		)}
 		creationRequired = true
 	}
 
 	// run Update if metadata needs changing unless running in RefreshOnlyWhenExpired mode
-	if !c.RefreshOnlyWhenExpired {
+	if !c.refreshOnlyWhenExpired {
 		needsOwnerUpdate := false
-		if c.Owner != nil {
-			needsOwnerUpdate = ensureOwnerReference(&caBundleConfigMap.ObjectMeta, c.Owner)
+		if c.owner != nil {
+			needsOwnerUpdate = ensureOwnerReference(&caBundleConfigMap.ObjectMeta, c.owner)
 		}
-		needsMetadataUpdate := c.AdditionalAnnotations.EnsureTLSMetadataUpdate(&caBundleConfigMap.ObjectMeta)
+		needsMetadataUpdate := c.additionalAnnotations.EnsureTLSMetadataUpdate(&caBundleConfigMap.ObjectMeta)
 		updateRequired = needsOwnerUpdate || needsMetadataUpdate
 	}
 
-	updatedCerts, err := manageCABundleConfigMap(caBundleConfigMap, signingCertKeyPair.Config.Certs[0])
+	updatedCerts, err := manageCABundleConfigMap(caBundleConfigMap, signingCertKeyPair.Config.Certs[0], c.clock)
 	if err != nil {
 		return nil, err
 	}
@@ -89,27 +116,27 @@ func (c CABundleConfigMap) EnsureConfigMapCABundle(ctx context.Context, signingC
 		} else if !equality.Semantic.DeepEqual(originalCABundleConfigMap.Data, caBundleConfigMap.Data) {
 			reason = fmt.Sprintf("signer update %s", signingCertKeyPairLocation)
 		}
-		c.EventRecorder.Eventf("CABundleUpdateRequired", "%q in %q requires a new cert: %s", c.Name, c.Namespace, reason)
+		c.eventRecorder.Eventf("CABundleUpdateRequired", "%q in %q requires a new cert: %s", c.name, c.namespace, reason)
 		LabelAsManagedConfigMap(caBundleConfigMap, CertificateTypeCABundle)
 
 		updateRequired = true
 	}
 
 	if creationRequired {
-		actualCABundleConfigMap, err := c.Client.ConfigMaps(c.Namespace).Create(ctx, caBundleConfigMap, metav1.CreateOptions{})
-		resourcehelper.ReportCreateEvent(c.EventRecorder, actualCABundleConfigMap, err)
+		actualCABundleConfigMap, err := c.client.ConfigMaps(c.namespace).Create(ctx, caBundleConfigMap, metav1.CreateOptions{})
+		resourcehelper.ReportCreateEvent(c.eventRecorder, actualCABundleConfigMap, err)
 		if err != nil {
 			return nil, err
 		}
 		klog.V(2).Infof("Created ca-bundle.crt configmap %s/%s with:\n%s", certs.CertificateBundleToString(updatedCerts), caBundleConfigMap.Namespace, caBundleConfigMap.Name)
 		caBundleConfigMap = actualCABundleConfigMap
 	} else if updateRequired {
-		actualCABundleConfigMap, err := c.Client.ConfigMaps(c.Namespace).Update(ctx, caBundleConfigMap, metav1.UpdateOptions{})
+		actualCABundleConfigMap, err := c.client.ConfigMaps(c.namespace).Update(ctx, caBundleConfigMap, metav1.UpdateOptions{})
 		if apierrors.IsConflict(err) {
 			// ignore error if its attempting to update outdated version of the configmap
 			return nil, nil
 		}
-		resourcehelper.ReportUpdateEvent(c.EventRecorder, actualCABundleConfigMap, err)
+		resourcehelper.ReportUpdateEvent(c.eventRecorder, actualCABundleConfigMap, err)
 		if err != nil {
 			return nil, err
 		}
@@ -131,7 +158,7 @@ func (c CABundleConfigMap) EnsureConfigMapCABundle(ctx context.Context, signingC
 
 // manageCABundleConfigMap adds the new certificate to the list of cabundles, eliminates duplicates, and prunes the list of expired
 // certs to trust as signers
-func manageCABundleConfigMap(caBundleConfigMap *corev1.ConfigMap, currentSigner *x509.Certificate) ([]*x509.Certificate, error) {
+func manageCABundleConfigMap(caBundleConfigMap *corev1.ConfigMap, currentSigner *x509.Certificate, clock clock.PassiveClock) ([]*x509.Certificate, error) {
 	if caBundleConfigMap.Data == nil {
 		caBundleConfigMap.Data = map[string]string{}
 	}
@@ -146,7 +173,7 @@ func manageCABundleConfigMap(caBundleConfigMap *corev1.ConfigMap, currentSigner 
 		}
 	}
 	certificates = append([]*x509.Certificate{currentSigner}, certificates...)
-	certificates = crypto.FilterExpiredCerts(certificates...)
+	certificates = crypto.FilterExpiredCertsWithClock(clock, certificates...)
 
 	finalCertificates := []*x509.Certificate{}
 	// now check for duplicates. n^2, but super simple

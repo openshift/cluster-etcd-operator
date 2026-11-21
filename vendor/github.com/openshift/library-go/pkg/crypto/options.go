@@ -3,6 +3,8 @@ package crypto
 import (
 	"crypto/x509/pkix"
 	"time"
+
+	"k8s.io/utils/clock"
 )
 
 // CertificateOptions holds optional configuration collected from functional options.
@@ -11,6 +13,7 @@ type CertificateOptions struct {
 	subject      *pkix.Name
 	extensionFns []CertificateExtensionFunc
 	signer       *CA
+	clock        clock.PassiveClock
 }
 
 // CertificateOption is a functional option for certificate creation.
@@ -45,5 +48,11 @@ func WithSigner(ca *CA) CertificateOption {
 func WithExtensions(fns ...CertificateExtensionFunc) CertificateOption {
 	return func(o *CertificateOptions) {
 		o.extensionFns = append(o.extensionFns, fns...)
+	}
+}
+
+func WithClock(c clock.PassiveClock) CertificateOption {
+	return func(o *CertificateOptions) {
+		o.clock = c
 	}
 }
