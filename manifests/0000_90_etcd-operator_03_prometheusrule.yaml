@@ -220,6 +220,7 @@ spec:
       expr: etcd_backup_status{status="Failed"} == 1
       for: 5m
       labels:
+        namespace: openshift-etcd-operator
         severity: warning
     - alert: etcdBackupHighFailureRate
       annotations:
@@ -246,6 +247,7 @@ spec:
         ) > 0.5
       for: 30m
       labels:
+        namespace: openshift-etcd-operator
         severity: warning
     - alert: etcdBackupHighFailureRate
       annotations:
@@ -272,11 +274,11 @@ spec:
         ) >= 0.75
       for: 30m
       labels:
+        namespace: openshift-etcd-operator
         severity: critical
     - alert: etcdBackupPolicyNoRecentSuccess
       annotations:
-        description: Backup policy "{{ $labels.etcd_backup_policy }}" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.
-        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
+        description: Backup policy "{{ $labels.etcd_backup_policy }}" has not completed a successful backup within two schedule intervals. This may prevent disaster recovery.
         summary: Backup policy has no successful backup within two schedule intervals.
       expr: |
         (
@@ -320,24 +322,25 @@ spec:
             )
           )
         )
+      for: 5m
       labels:
-        severity: critical
+        namespace: openshift-etcd-operator
+        severity: warning
     - alert: etcdBackupDurationHigh
       annotations:
         description: etcd backup "{{ $labels.etcd_backup }}" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.
         summary: etcd backup duration is high.
       expr: |
         (
-          etcd_backup_completion_timestamp_seconds - on(etcd_backup, uid) etcd_backup_creation_timestamp_seconds
-        ) > 1800
-        or
-        (
-          (etcd_backup_status{status="Running"} == 1)
-          and on(etcd_backup, uid)
-          (time() - etcd_backup_creation_timestamp_seconds > 1800)
+          max by (etcd_backup, uid) (etcd_backup_status{status="Running"} == 1)
+          unless on(etcd_backup, uid)
+          (etcd_backup_status{status=~"Completed|Failed"} == 1)
         )
+        and on(etcd_backup, uid)
+        (time() - max by (etcd_backup, uid) (etcd_backup_creation_timestamp_seconds) > 1800)
       for: 5m
       labels:
+        namespace: openshift-etcd-operator
         severity: warning
   - name: tnf-pacemaker.rules
     rules:
