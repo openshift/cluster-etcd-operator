@@ -40,7 +40,7 @@ tests:
               uid: backup-uid-1
             exp_annotations:
               summary: etcd backup duration is high.
-              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+              description: 'etcd backup "backup-1" is still running 40m 0s after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.'
 
   # Threshold and hold: age must exceed 1800s (true from 31m), then the alert is
   # pending for 5m and fires at 36m.
@@ -67,7 +67,7 @@ tests:
               uid: backup-uid-1
             exp_annotations:
               summary: etcd backup duration is high.
-              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+              description: 'etcd backup "backup-1" is still running 36m 0s after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.'
 
   # Duplicate scrape targets export the same Running backup: one alert per
   # (etcd_backup, uid), without per-target labels.
@@ -92,7 +92,7 @@ tests:
               uid: backup-uid-1
             exp_annotations:
               summary: etcd backup duration is high.
-              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+              description: 'etcd backup "backup-1" is still running 40m 0s after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.'
 
   # Rollout overlap: the outgoing pod's series stop (stale) at 46m and the
   # incoming pod's series start at 44m. The alert keeps the same identity, so it
@@ -118,7 +118,7 @@ tests:
               uid: backup-uid-1
             exp_annotations:
               summary: etcd backup duration is high.
-              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+              description: 'etcd backup "backup-1" is still running 40m 0s after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.'
       - eval_time: 47m
         alertname: etcdBackupDurationHigh
         exp_alerts:
@@ -129,7 +129,7 @@ tests:
               uid: backup-uid-1
             exp_annotations:
               summary: etcd backup duration is high.
-              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+              description: 'etcd backup "backup-1" is still running 47m 0s after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.'
 
   # Running -> Completed at 45m after a slow run: the alert fires while Running and
   # clears once Completed is observed. A slow backup that has finished does not
@@ -157,7 +157,7 @@ tests:
               uid: backup-uid-1
             exp_annotations:
               summary: etcd backup duration is high.
-              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+              description: 'etcd backup "backup-1" is still running 40m 0s after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.'
       - eval_time: 45m
         alertname: etcdBackupDurationHigh
         exp_alerts: []
@@ -191,7 +191,7 @@ tests:
               uid: backup-uid-1
             exp_annotations:
               summary: etcd backup duration is high.
-              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+              description: 'etcd backup "backup-1" is still running 40m 0s after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.'
       - eval_time: 45m
         alertname: etcdBackupDurationHigh
         exp_alerts: []
@@ -252,7 +252,7 @@ tests:
               uid: backup-uid-1
             exp_annotations:
               summary: etcd backup duration is high.
-              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+              description: 'etcd backup "backup-1" is still running 38m 0s after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.'
           - exp_labels:
               severity: warning
               namespace: openshift-etcd-operator
@@ -260,7 +260,7 @@ tests:
               uid: backup-uid-2
             exp_annotations:
               summary: etcd backup duration is high.
-              description: 'etcd backup "backup-2" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+              description: 'etcd backup "backup-2" is still running 38m 0s after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.'
       - eval_time: 40m
         alertname: etcdBackupDurationHigh
         exp_alerts: []
@@ -324,7 +324,7 @@ tests:
               uid: backup-uid-a
             exp_annotations:
               summary: etcd backup duration is high.
-              description: 'etcd backup "backup-a" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+              description: 'etcd backup "backup-a" is still running 40m 0s after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.'
       - eval_time: 55m
         alertname: etcdBackupDurationHigh
         exp_alerts:
@@ -335,7 +335,7 @@ tests:
               uid: backup-uid-a
             exp_annotations:
               summary: etcd backup duration is high.
-              description: 'etcd backup "backup-a" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+              description: 'etcd backup "backup-a" is still running 55m 0s after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.'
       - eval_time: 56m
         alertname: etcdBackupDurationHigh
         exp_alerts:
@@ -346,7 +346,7 @@ tests:
               uid: backup-uid-a
             exp_annotations:
               summary: etcd backup duration is high.
-              description: 'etcd backup "backup-a" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+              description: 'etcd backup "backup-a" is still running 56m 0s after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.'
           - exp_labels:
               severity: warning
               namespace: openshift-etcd-operator
@@ -354,7 +354,7 @@ tests:
               uid: backup-uid-b
             exp_annotations:
               summary: etcd backup duration is high.
-              description: 'etcd backup "backup-b" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+              description: 'etcd backup "backup-b" is still running 36m 0s after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.'
 
   # Recreated backup reusing a name: a lagging exporter still reports the old
   # object (backup-uid-1) as Completed while the other exporter reports the new
@@ -394,7 +394,7 @@ tests:
               uid: backup-uid-2
             exp_annotations:
               summary: etcd backup duration is high.
-              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+              description: 'etcd backup "backup-1" is still running 40m 0s after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.'
 
   # The namespace label is static, not taken from the scrape target: one exporter
   # reports a namespace label and the other none, and the backup still alerts
@@ -420,7 +420,7 @@ tests:
               uid: backup-uid-1
             exp_annotations:
               summary: etcd backup duration is high.
-              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+              description: 'etcd backup "backup-1" is still running 40m 0s after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.'
 
   # etcdBackupPolicyNoRecentSuccess is a warning with a 5m hold, so these groups
   # sample every minute (a sample is only visible for 5m, so hourly samples could

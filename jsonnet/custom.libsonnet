@@ -364,14 +364,18 @@ local backupAlertNamespace = 'openshift-etcd-operator';
             // itself or its series go stale. With a single operator replica a restart
             // can leave a gap instead of an overlap; while no exporter reports the
             // backup the alert resolves, and it fires again after a new 5m hold.
+            //
+            // The age comparison is the left operand of the intersection, so the alert
+            // value is the time in seconds since the EtcdBackup was created, as shown
+            // in the description.
             expr: |||
+              (time() - max by (etcd_backup, uid) (etcd_backup_creation_timestamp_seconds) > 1800)
+              and on(etcd_backup, uid)
               (
                 max by (etcd_backup, uid) (etcd_backup_status{status="Running"} == 1)
                 unless on(etcd_backup, uid)
                 (etcd_backup_status{status=~"Completed|Failed"} == 1)
               )
-              and on(etcd_backup, uid)
-              (time() - max by (etcd_backup, uid) (etcd_backup_creation_timestamp_seconds) > 1800)
             |||,
             'for': '5m',
             labels: {
@@ -379,7 +383,7 @@ local backupAlertNamespace = 'openshift-etcd-operator';
               namespace: backupAlertNamespace,
             },
             annotations: {
-              description: 'etcd backup "{{ $labels.etcd_backup }}" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.',
+              description: 'etcd backup "{{ $labels.etcd_backup }}" is still running {{ $value | humanizeDuration }} after it was created, longer than expected (30 minutes). This time is measured from the creation of the EtcdBackup object and includes any time the backup spent queued before it started running. This may indicate storage performance issues or an issue with the backup process.',
               summary: 'etcd backup duration is high.',
             },
           },
