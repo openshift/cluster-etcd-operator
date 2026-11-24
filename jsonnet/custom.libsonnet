@@ -9,6 +9,85 @@
 // EtcdBackup and EtcdBackupPolicy objects.
 local backupAlertNamespace = 'openshift-etcd-operator';
 
+// etcdBackupPolicyNoRecentSuccess has two overlapping severities: info past one
+// schedule interval, plus warning past two. Both compare one shared elapsed-time
+// signal with a multiple of the policy's schedule interval, so they cannot
+// disagree about when a policy last succeeded.
+//
+// backupPolicyElapsed has one series per EtcdBackupPolicy object, labeled only
+// (etcd_backup_policy, uid). Its value is the number of seconds since the latest
+// completion of a Completed EtcdBackup associated with the policy name, or since
+// the policy was created when no Completed EtcdBackup of that name is exported.
+// It only sees EtcdBackup objects that still exist: a successful backup that was
+// deleted (for example by retention) no longer counts. Backups are associated
+// with policies by name on the shared etcd_backup_policy label.
+//
+// More than one scrape target can export the same object, e.g. an outgoing and
+// an incoming operator pod whose series are both within the lookback window.
+// Their series differ only in target labels (instance, pod), so every operand
+// that must be unique on its side of a join is first reduced with max: policy
+// series by policy name+uid, backup timestamps by backup name+uid, and the last
+// success by policy name. Creation timestamps are identical across targets.
+// Raw etcd_backup_info is only used on the "many" side of group_left or inside
+// set operators. Adding 0 * the per-UID policy creation timestamp copies the
+// per-name elapsed time to every policy object with that name, so two UIDs
+// sharing a name (a recreated policy seen through an outgoing pod) are each
+// compared against their own interval.
+local backupPolicyElapsed = std.rstripChars(|||
+  (
+    (
+      (time() - max by (etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds))
+      unless on(etcd_backup_policy)
+      (
+        etcd_backup_info
+        and on(etcd_backup, uid)
+        (etcd_backup_status{status="Completed"} == 1)
+      )
+    )
+    or
+    (
+      (
+        time()
+        -
+        max by (etcd_backup_policy) (
+          (
+            etcd_backup_info
+            * on(etcd_backup, uid) group_left()
+            max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds)
+          )
+          and on(etcd_backup, uid)
+          (etcd_backup_status{status="Completed"} == 1)
+        )
+      )
+      + on(etcd_backup_policy) group_right()
+      (0 * max by (etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds))
+    )
+  )
+|||, '\n');
+
+// One schedule interval per policy object. The interval series is omitted when
+// the schedule cannot be parsed, which suppresses both severities. max picks the
+// larger threshold if targets briefly disagree after a schedule change.
+local backupPolicyInterval = 'max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds)';
+
+// Each severity fires once its threshold expression has held for 5m (a policy
+// choice, matching etcdBackupFailed and etcdBackupDurationHigh).
+local backupPolicyHold = '5m';
+
+// Expression shared by both severities: the policy objects whose elapsed time
+// exceeds threshold. The comparison keeps backupPolicyElapsed as the value.
+local backupPolicyElapsedAbove(threshold) = std.format(|||
+  %s
+  > on(etcd_backup_policy, uid)
+  %s
+|||, [backupPolicyElapsed, threshold]);
+
+// Description shared by both severities; $value is backupPolicyElapsed. It
+// counts only existing EtcdBackup objects and uses estimated intervals, so it
+// does not claim that no backup ever succeeded or that a run missed a deadline.
+local backupPolicyDescription(threshold, consequence) =
+  'No existing EtcdBackup of backup policy "{{ $labels.etcd_backup_policy }}" completed successfully in the last {{ $value | humanizeDuration }}, which is longer than %s. The time is measured from the latest successful EtcdBackup of the policy that still exists, or from the policy creation if none exists. %s' % [threshold, consequence];
+
 {
   prometheusRules:: {
     groups: [
@@ -270,71 +349,40 @@ local backupAlertNamespace = 'openshift-etcd-operator';
           // etcdBackupNoPolicyConfigured deferred until AutomatedEtcdBackup GA:
           // it needs a feature-gate presence signal (e.g. etcd_automated_backup_enabled)
           // so absent(etcd_backup_policy_info) does not fire on Default clusters.
+
+          // etcdBackupPolicyNoRecentSuccess: info once the elapsed time exceeds one
+          // schedule interval and warning once it exceeds two, each with its own
+          // 5m hold. Thresholds are multiples of the interval so weekly or monthly
+          // policies do not fire permanently. As with etcdDatabaseQuotaLowSpace, the
+          // severities are independent and overlap: past two intervals both fire,
+          // and Alertmanager's default inhibition (warning over info, matching
+          // namespace and alertname) mutes the info notification. Every policy
+          // shares that namespace and alert name, so a firing warning for one policy
+          // also mutes info notifications for other policies. Alert labels are
+          // etcd_backup_policy, uid, severity and the static namespace.
           {
             alert: 'etcdBackupPolicyNoRecentSuccess',
-            // Last success is derived from live Completed EtcdBackup metrics (no
-            // ConfigMap tracker). Threshold is 2*schedule interval so weekly/monthly
-            // policies do not permanently fire. Interval series absence (unparseable
-            // schedule) suppresses this alert. Backups are associated with policies
-            // by name on the shared etcd_backup_policy label.
-            //
-            // More than one scrape target can export the same object, e.g. an
-            // outgoing and an incoming operator pod whose series are both within
-            // the lookback window. Their series differ only in target labels
-            // (instance, pod), so every operand that must be unique on its side of
-            // a join is first reduced with max: policy series by policy name+uid,
-            // backup timestamps by backup name+uid, and the last success by policy
-            // name. Creation timestamps are identical across targets; max of the
-            // schedule interval picks the larger threshold if targets briefly
-            // disagree after a schedule change. Raw etcd_backup_info is only used on
-            // the "many" side of group_left or inside set operators.
-            // The alert keeps etcd_backup_policy and uid, carried on the "many" side of
-            // group_left/group_right; namespace comes from the static backup alert
-            // label. The last success is compared
-            // per policy object, so two UIDs sharing a name (a recreated policy seen
-            // through an outgoing pod) are evaluated against their own interval.
-            expr: |||
-              (
-                (
-                  (time() - max by (etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds))
-                  > on(etcd_backup_policy, uid) group_left()
-                  (2 * max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
-                )
-                unless on(etcd_backup_policy)
-                (
-                  etcd_backup_info
-                  and on(etcd_backup, uid)
-                  (etcd_backup_status{status="Completed"} == 1)
-                )
-              )
-              or
-              (
-                (
-                  time()
-                  -
-                  max by (etcd_backup_policy) (
-                    (
-                      etcd_backup_info
-                      * on(etcd_backup, uid) group_left()
-                      max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds)
-                    )
-                    and on(etcd_backup, uid)
-                    (etcd_backup_status{status="Completed"} == 1)
-                  )
-                )
-                > on(etcd_backup_policy) group_right()
-                (2 * max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
-              )
-            |||,
-            // 5m hold before firing (a policy choice, matching etcdBackupFailed and
-            // etcdBackupDurationHigh).
-            'for': '5m',
+            expr: backupPolicyElapsedAbove(backupPolicyInterval),
+            'for': backupPolicyHold,
+            labels: {
+              severity: 'info',
+              namespace: backupAlertNamespace,
+            },
+            annotations: {
+              description: backupPolicyDescription('one estimated schedule interval', 'A warning also fires when this time exceeds two estimated schedule intervals.'),
+              summary: 'Backup policy has no successful backup within one schedule interval.',
+            },
+          },
+          {
+            alert: 'etcdBackupPolicyNoRecentSuccess',
+            expr: backupPolicyElapsedAbove('(2 * %s)' % backupPolicyInterval),
+            'for': backupPolicyHold,
             labels: {
               severity: 'warning',
               namespace: backupAlertNamespace,
             },
             annotations: {
-              description: 'Backup policy "{{ $labels.etcd_backup_policy }}" has not completed a successful backup within two schedule intervals. This may prevent disaster recovery.',
+              description: backupPolicyDescription('two estimated schedule intervals', 'This may prevent disaster recovery.'),
               summary: 'Backup policy has no successful backup within two schedule intervals.',
             },
           },

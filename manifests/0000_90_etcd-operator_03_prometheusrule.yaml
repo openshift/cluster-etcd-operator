@@ -278,40 +278,80 @@ spec:
         severity: critical
     - alert: etcdBackupPolicyNoRecentSuccess
       annotations:
-        description: Backup policy "{{ $labels.etcd_backup_policy }}" has not completed a successful backup within two schedule intervals. This may prevent disaster recovery.
+        description: No existing EtcdBackup of backup policy "{{ $labels.etcd_backup_policy }}" completed successfully in the last {{ $value | humanizeDuration }}, which is longer than one estimated schedule interval. The time is measured from the latest successful EtcdBackup of the policy that still exists, or from the policy creation if none exists. A warning also fires when this time exceeds two estimated schedule intervals.
+        summary: Backup policy has no successful backup within one schedule interval.
+      expr: |
+        (
+          (
+            (time() - max by (etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds))
+            unless on(etcd_backup_policy)
+            (
+              etcd_backup_info
+              and on(etcd_backup, uid)
+              (etcd_backup_status{status="Completed"} == 1)
+            )
+          )
+          or
+          (
+            (
+              time()
+              -
+              max by (etcd_backup_policy) (
+                (
+                  etcd_backup_info
+                  * on(etcd_backup, uid) group_left()
+                  max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds)
+                )
+                and on(etcd_backup, uid)
+                (etcd_backup_status{status="Completed"} == 1)
+              )
+            )
+            + on(etcd_backup_policy) group_right()
+            (0 * max by (etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds))
+          )
+        )
+        > on(etcd_backup_policy, uid)
+        max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds)
+      for: 5m
+      labels:
+        namespace: openshift-etcd-operator
+        severity: info
+    - alert: etcdBackupPolicyNoRecentSuccess
+      annotations:
+        description: No existing EtcdBackup of backup policy "{{ $labels.etcd_backup_policy }}" completed successfully in the last {{ $value | humanizeDuration }}, which is longer than two estimated schedule intervals. The time is measured from the latest successful EtcdBackup of the policy that still exists, or from the policy creation if none exists. This may prevent disaster recovery.
         summary: Backup policy has no successful backup within two schedule intervals.
       expr: |
         (
           (
             (time() - max by (etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds))
-            > on(etcd_backup_policy, uid) group_left()
-            (2 * max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
-          )
-          unless on(etcd_backup_policy)
-          (
-            etcd_backup_info
-            and on(etcd_backup, uid)
-            (etcd_backup_status{status="Completed"} == 1)
-          )
-        )
-        or
-        (
-          (
-            time()
-            -
-            max by (etcd_backup_policy) (
-              (
-                etcd_backup_info
-                * on(etcd_backup, uid) group_left()
-                max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds)
-              )
+            unless on(etcd_backup_policy)
+            (
+              etcd_backup_info
               and on(etcd_backup, uid)
               (etcd_backup_status{status="Completed"} == 1)
             )
           )
-          > on(etcd_backup_policy) group_right()
-          (2 * max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
+          or
+          (
+            (
+              time()
+              -
+              max by (etcd_backup_policy) (
+                (
+                  etcd_backup_info
+                  * on(etcd_backup, uid) group_left()
+                  max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds)
+                )
+                and on(etcd_backup, uid)
+                (etcd_backup_status{status="Completed"} == 1)
+              )
+            )
+            + on(etcd_backup_policy) group_right()
+            (0 * max by (etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds))
+          )
         )
+        > on(etcd_backup_policy, uid)
+        (2 * max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
       for: 5m
       labels:
         namespace: openshift-etcd-operator
