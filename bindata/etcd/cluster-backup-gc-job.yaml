@@ -34,5 +34,6 @@ spec:
       nodeSelector:
         node-role.kubernetes.io/control-plane: ""
       restartPolicy: Never
+      serviceAccountName: etcd-backup-sa
       tolerations:
         - operator: "Exists"

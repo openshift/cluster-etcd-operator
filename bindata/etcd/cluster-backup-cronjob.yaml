@@ -37,7 +37,7 @@ spec:
                   valueFrom:
                     fieldRef:
                       fieldPath: metadata.labels['batch.kubernetes.io/job-name']
-          serviceAccountName: etcd-backup-sa
+          serviceAccountName: etcd-backup-policy-sa
           nodeSelector:
             node-role.kubernetes.io/control-plane: ""
           tolerations:

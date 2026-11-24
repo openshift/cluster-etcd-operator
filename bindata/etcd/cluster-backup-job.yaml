@@ -66,6 +66,7 @@ spec:
       activeDeadlineSeconds: 900
       restartPolicy: Never
       hostNetwork: true
+      serviceAccountName: etcd-backup-sa
       tolerations:
         - operator: "Exists"
       volumes:
