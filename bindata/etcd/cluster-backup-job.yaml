@@ -62,7 +62,7 @@ spec:
               name: etcd-client
             - mountPath: /var/run/configmaps/etcd-ca
               name: etcd-ca
-      priorityClassName: system-node-critical
+      priorityClassName: system-cluster-critical
       activeDeadlineSeconds: 900
       restartPolicy: Never
       hostNetwork: true
