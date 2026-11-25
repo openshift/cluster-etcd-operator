@@ -309,14 +309,74 @@ func TestHealthCheck_getPacemakerStatus_UnchangedTimestamp(t *testing.T) {
 	require.Nil(t, current2, "Second call with unchanged timestamp should return nil")
 }
 
+// TestHealthCheck_sync_AppliesPendingBlockAtDeadlineWithUnchangedTimestamp covers the case where the
+// UpgradeableBlockInertia deadline elapses between collector updates. The inertia is wall-clock, so a
+// pending block must be applied on the controller's periodic resync even when the CR's lastUpdated has
+// not advanced; otherwise the block is deferred until the next CR write or until the status goes stale.
+func TestHealthCheck_sync_AppliesPendingBlockAtDeadlineWithUnchangedTimestamp(t *testing.T) {
+	// Fresh, non-stale timestamp that never changes across the two syncs.
+	fixedTime := metav1.Now()
+	mockStatus := &pacmkrv1.PacemakerCluster{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: pacmkrv1.SchemeGroupVersion.String(),
+			Kind:       "PacemakerCluster",
+		},
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Status: pacmkrv1.PacemakerClusterStatus{
+			Conditions: createHealthyClusterConditions(),
+			Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
+				createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
+				createUnhealthyNodeStatus("master-1", []string{"192.168.1.11"}, pacmkrv1.PacemakerClusterResourceName("etcd")),
+			},
+			LastUpdated: fixedTime,
+		},
+	}
+
+	controller := createTestHealthCheckWithMockStatus(t, mockStatus)
+	controller.disruptionTracker = NewDisruptionTracker()
+	ctx := context.TODO()
+
+	// Sync #1: the Error is observed and the inertia clock starts. Upgradeable must remain unblocked
+	// (damped) on the first sync, and a pending block must be recorded.
+	require.NoError(t, controller.sync(ctx, nil))
+	up1, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+	require.NoError(t, err)
+	require.True(t, up1 == nil || up1.Status != operatorv1.ConditionFalse,
+		"within inertia the first sync must not block upgrades")
+	require.False(t, controller.upgradeBlockedSince.IsZero(),
+		"a pending upgrade block should have been recorded")
+
+	// The inertia deadline passes WITHOUT the collector advancing lastUpdated.
+	controller.previousMu.Lock()
+	controller.upgradeBlockedSince = time.Now().Add(-UpgradeableBlockInertia - time.Minute)
+	controller.previousMu.Unlock()
+
+	// Sync #2 sees the same (non-stale) lastUpdated. The pending block has now crossed its deadline
+	// and must be applied. Before the fix, sync skips on the unchanged timestamp and never reconciles
+	// the deadline, leaving Upgradeable unblocked.
+	require.NoError(t, controller.sync(ctx, nil))
+	up2, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+	require.NoError(t, err)
+	require.NotNil(t, up2, "upgradeable condition should be set after the deadline")
+	require.Equal(t, operatorv1.ConditionFalse, up2.Status,
+		"a pending block must be applied at its deadline even when lastUpdated is unchanged")
+}
+
 func TestHealthCheck_updateOperatorStatus(t *testing.T) {
+	// An empty expected Status ("") means the condition is expected to be absent (untouched).
 	tests := []struct {
-		name     string
-		status   *HealthStatus
-		previous *HealthStatus
+		name                  string
+		status                *HealthStatus
+		previous              *HealthStatus
+		setup                 func(*HealthCheck) // optional: preset baselines/conditions before the call
+		expectedDegraded      operatorv1.ConditionStatus
+		expectedUpgradeable   operatorv1.ConditionStatus
+		expectedUpgradeReason string // checked only when expectedUpgradeable is False
 	}{
 		{
-			name: "error_status_sets_degraded",
+			// Degraded is set immediately, but Upgradeable is damped: a single Error sync must
+			// not flap the Upgradeable union (library-go applies no inertia there).
+			name: "error_first_sync_sets_degraded_but_damps_upgrade",
 			status: &HealthStatus{
 				OverallStatus: StatusError,
 				Warnings:      []string{"Test warning"},
@@ -326,9 +386,30 @@ func TestHealthCheck_updateOperatorStatus(t *testing.T) {
 				OverallStatus: StatusHealthy,
 				CRLastUpdated: time.Now().Add(-1 * time.Minute),
 			},
+			expectedDegraded:    operatorv1.ConditionTrue,
+			expectedUpgradeable: "",
 		},
 		{
-			name: "healthy_status_clears_degraded",
+			name: "error_persisted_past_inertia_blocks_upgrade",
+			status: &HealthStatus{
+				OverallStatus: StatusError,
+				Warnings:      []string{"Test warning"},
+				Errors:        []string{"Test error"},
+			},
+			previous: &HealthStatus{
+				OverallStatus: StatusHealthy,
+				CRLastUpdated: time.Now().Add(-1 * time.Minute),
+			},
+			// The block has already persisted longer than the inertia window.
+			setup: func(c *HealthCheck) {
+				c.upgradeBlockedSince = time.Now().Add(-UpgradeableBlockInertia - time.Minute)
+			},
+			expectedDegraded:      operatorv1.ConditionTrue,
+			expectedUpgradeable:   operatorv1.ConditionFalse,
+			expectedUpgradeReason: reasonPacemakerUnhealthy,
+		},
+		{
+			name: "healthy_status_clears_degraded_and_allows_upgrade",
 			status: &HealthStatus{
 				OverallStatus: StatusHealthy,
 				Warnings:      []string{},
@@ -338,9 +419,11 @@ func TestHealthCheck_updateOperatorStatus(t *testing.T) {
 				OverallStatus: StatusHealthy,
 				CRLastUpdated: time.Now().Add(-1 * time.Minute),
 			},
+			expectedDegraded:    operatorv1.ConditionFalse,
+			expectedUpgradeable: operatorv1.ConditionTrue,
 		},
 		{
-			name: "warning_status_clears_degraded",
+			name: "warning_status_clears_degraded_and_allows_upgrade",
 			status: &HealthStatus{
 				OverallStatus: StatusWarning,
 				Warnings:      []string{"Test warning"},
@@ -350,6 +433,107 @@ func TestHealthCheck_updateOperatorStatus(t *testing.T) {
 				OverallStatus: StatusHealthy,
 				CRLastUpdated: time.Now().Add(-1 * time.Minute),
 			},
+			expectedDegraded:    operatorv1.ConditionFalse,
+			expectedUpgradeable: operatorv1.ConditionTrue,
+		},
+		{
+			// OCPBUGS-85833 review clarification: fencing that is available but not fully
+			// managed is a Warning and must NOT block upgrades; only fencing being unavailable
+			// (an Error) blocks. Even with the inertia window long elapsed, a Warning never blocks.
+			name: "warning_fencing_degraded_never_blocks_upgrade",
+			status: &HealthStatus{
+				OverallStatus: StatusWarning,
+				Warnings:      []string{"master-0: " + msgFencingDegraded},
+				Errors:        []string{},
+			},
+			previous: &HealthStatus{
+				OverallStatus: StatusHealthy,
+				CRLastUpdated: time.Now().Add(-1 * time.Minute),
+			},
+			setup: func(c *HealthCheck) {
+				c.upgradeBlockedSince = time.Now().Add(-UpgradeableBlockInertia - time.Minute)
+			},
+			expectedDegraded:    operatorv1.ConditionFalse,
+			expectedUpgradeable: operatorv1.ConditionTrue,
+		},
+		{
+			name: "unknown_within_grace_leaves_conditions_untouched",
+			status: &HealthStatus{
+				OverallStatus: StatusUnknown,
+				Warnings:      []string{},
+				Errors:        []string{"CR not found"},
+			},
+			previous: &HealthStatus{
+				OverallStatus: StatusHealthy,
+				// Recent enough to stay within StatusUnknownDegradedThreshold.
+				CRLastUpdated: time.Now().Add(-1 * time.Minute),
+			},
+			expectedDegraded:    "",
+			expectedUpgradeable: "",
+		},
+		{
+			// Prolonged Unknown is exempt from the Upgradeable inertia: the grace period already
+			// provides the anti-flap damping, so it blocks on the first sync past the threshold.
+			name: "unknown_past_threshold_sets_degraded_and_blocks_upgrade",
+			status: &HealthStatus{
+				OverallStatus: StatusUnknown,
+				Warnings:      []string{},
+				Errors:        []string{"CR not found"},
+			},
+			previous: &HealthStatus{
+				OverallStatus: StatusHealthy,
+				// Older than StatusUnknownDegradedThreshold (5m) so the grace period has elapsed.
+				CRLastUpdated: time.Now().Add(-10 * time.Minute),
+			},
+			expectedDegraded:      operatorv1.ConditionTrue,
+			expectedUpgradeable:   operatorv1.ConditionFalse,
+			expectedUpgradeReason: reasonPacemakerUnhealthy,
+		},
+		{
+			// Blocking #1: after a controller restart `previous` is nil, but a stale CR still
+			// carries its lastUpdated timestamp. The grace period must still expire so a persisted
+			// Upgradeable=True does not survive indefinitely while health is indeterminate.
+			name: "unknown_restart_stale_cr_past_threshold_blocks_upgrade",
+			status: &HealthStatus{
+				OverallStatus: StatusUnknown,
+				Warnings:      []string{},
+				Errors:        []string{"Pacemaker status is stale"},
+				CRLastUpdated: time.Now().Add(-10 * time.Minute),
+			},
+			previous:              nil,
+			expectedDegraded:      operatorv1.ConditionTrue,
+			expectedUpgradeable:   operatorv1.ConditionFalse,
+			expectedUpgradeReason: reasonPacemakerUnhealthy,
+		},
+		{
+			// Restart with a missing CR (no timestamp anywhere): the in-memory baseline is seeded
+			// to "now", so the first sync stays within grace and leaves conditions untouched.
+			name: "unknown_restart_missing_cr_within_grace_leaves_untouched",
+			status: &HealthStatus{
+				OverallStatus: StatusUnknown,
+				Warnings:      []string{},
+				Errors:        []string{"PacemakerCluster CR not found in cache"},
+			},
+			previous:            nil,
+			expectedDegraded:    "",
+			expectedUpgradeable: "",
+		},
+		{
+			// Restart with a missing CR but the in-memory baseline already elapsed (controller has
+			// been unable to determine health across restarts for longer than the threshold).
+			name: "unknown_restart_missing_cr_expired_baseline_blocks_upgrade",
+			status: &HealthStatus{
+				OverallStatus: StatusUnknown,
+				Warnings:      []string{},
+				Errors:        []string{"PacemakerCluster CR not found in cache"},
+			},
+			previous: nil,
+			setup: func(c *HealthCheck) {
+				c.unknownSince = time.Now().Add(-10 * time.Minute)
+			},
+			expectedDegraded:      operatorv1.ConditionTrue,
+			expectedUpgradeable:   operatorv1.ConditionFalse,
+			expectedUpgradeReason: reasonPacemakerUnhealthy,
 		},
 	}
 
@@ -358,10 +542,413 @@ func TestHealthCheck_updateOperatorStatus(t *testing.T) {
 			controller := createTestHealthCheck()
 			ctx := context.TODO()
 
+			if tt.setup != nil {
+				tt.setup(controller)
+			}
+
 			err := controller.updateOperatorStatus(ctx, tt.status, tt.previous)
 			require.NoError(t, err, "updateOperatorStatus should not return an error")
+
+			degraded, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerDegraded)
+			require.NoError(t, err)
+			if tt.expectedDegraded == "" {
+				require.Nil(t, degraded, "degraded condition should be untouched")
+			} else {
+				require.NotNil(t, degraded, "degraded condition should be set")
+				require.Equal(t, tt.expectedDegraded, degraded.Status, "degraded condition status")
+			}
+
+			upgradeable, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+			require.NoError(t, err)
+			if tt.expectedUpgradeable == "" {
+				require.Nil(t, upgradeable, "upgradeable condition should be untouched")
+			} else {
+				require.NotNil(t, upgradeable, "upgradeable condition should be set")
+				require.Equal(t, tt.expectedUpgradeable, upgradeable.Status, "upgradeable condition status")
+				if tt.expectedUpgradeable == operatorv1.ConditionFalse {
+					require.NotEmpty(t, upgradeable.Message, "blocking upgradeable condition should carry a message")
+					require.Equal(t, tt.expectedUpgradeReason, upgradeable.Reason)
+				} else {
+					require.Equal(t, "AsExpected", upgradeable.Reason)
+				}
+			}
 		})
 	}
+}
+
+// TestHealthCheck_updateOperatorStatus_RestartWithPersistedUpgradeableTrue covers blocking #1:
+// after a controller restart, `previous` is nil in memory, but a persisted Upgradeable=True must
+// not survive indefinitely while pacemaker health cannot be determined. Repeated Unknown
+// observations beyond the grace period (here via a stale CR that still carries its lastUpdated
+// timestamp) must flip the persisted True to False.
+func TestHealthCheck_updateOperatorStatus_RestartWithPersistedUpgradeableTrue(t *testing.T) {
+	controller := createTestHealthCheck()
+	ctx := context.TODO()
+
+	// Before the restart the cluster was healthy, so Upgradeable=True was persisted.
+	require.NoError(t, controller.setPacemakerUpgradeableCondition(ctx, true, "AsExpected", ""))
+	persisted, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	require.Equal(t, operatorv1.ConditionTrue, persisted.Status)
+
+	// Simulate a restart: no in-memory baselines survive.
+	controller.previous = nil
+	controller.unknownSince = time.Time{}
+	controller.upgradeBlockedSince = time.Time{}
+
+	// Repeated Unknown observations: the CR is stale and its last valid timestamp is beyond the
+	// grace period. `previous` stays nil because Unknown is never saved as a valid observation.
+	staleStatus := &HealthStatus{
+		OverallStatus: StatusUnknown,
+		Warnings:      []string{},
+		Errors:        []string{"Pacemaker status is stale"},
+		CRLastUpdated: time.Now().Add(-10 * time.Minute),
+	}
+	for i := 0; i < 3; i++ {
+		require.NoError(t, controller.updateOperatorStatus(ctx, staleStatus, nil))
+	}
+
+	upgradeable, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+	require.NoError(t, err)
+	require.NotNil(t, upgradeable)
+	require.Equal(t, operatorv1.ConditionFalse, upgradeable.Status, "prolonged Unknown after restart must block upgrades")
+	require.Equal(t, reasonPacemakerUnhealthy, upgradeable.Reason)
+	require.NotEmpty(t, upgradeable.Message)
+
+	degraded, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerDegraded)
+	require.NoError(t, err)
+	require.NotNil(t, degraded)
+	require.Equal(t, operatorv1.ConditionTrue, degraded.Status, "prolonged Unknown after restart must also degrade")
+}
+
+// TestHealthCheck_updateOperatorStatus_TransientErrorDoesNotFlapUpgrade covers blocking #3: a brief
+// Error that recovers before the inertia window elapses must never write Upgradeable=False, and
+// recovery clears the damping clock so a later error starts a fresh window.
+func TestHealthCheck_updateOperatorStatus_TransientErrorDoesNotFlapUpgrade(t *testing.T) {
+	controller := createTestHealthCheck()
+	ctx := context.TODO()
+
+	previousHealthy := &HealthStatus{OverallStatus: StatusHealthy, CRLastUpdated: time.Now().Add(-1 * time.Minute)}
+	errorStatus := &HealthStatus{OverallStatus: StatusError, Errors: []string{"Node master-0 is offline"}}
+	healthyStatus := &HealthStatus{OverallStatus: StatusHealthy, Errors: []string{}, Warnings: []string{}}
+
+	// A single Error sync must not flip Upgradeable (inertia not yet satisfied).
+	require.NoError(t, controller.updateOperatorStatus(ctx, errorStatus, previousHealthy))
+	upgradeable, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+	require.NoError(t, err)
+	require.Nil(t, upgradeable, "a transient Error must not immediately flip Upgradeable to False")
+	require.False(t, controller.upgradeBlockedSince.IsZero(), "the damping clock should have started")
+
+	// Recovery clears the block immediately and resets the clock.
+	require.NoError(t, controller.updateOperatorStatus(ctx, healthyStatus, previousHealthy))
+	upgradeable, err = controller.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+	require.NoError(t, err)
+	require.NotNil(t, upgradeable)
+	require.Equal(t, operatorv1.ConditionTrue, upgradeable.Status, "recovery must allow upgrades immediately")
+	require.True(t, controller.upgradeBlockedSince.IsZero(), "recovery must reset the damping clock")
+}
+
+// TestHealthCheck_NodeNotFenceableBlocksUpgrade pins the rule agreed in review: if either of the
+// two TNF nodes is no longer fenceable, upgrades must be blocked. The collector marks such a node
+// FencingAvailable=False, FencingHealthy=False and Healthy=False (fencing availability is folded
+// into the node's Healthy condition). The health check must turn that into an Error and, once the
+// inertia window has elapsed, Upgradeable=False. Only one of the two nodes loses fencing here, so
+// this also proves a single unfenceable node is enough to block.
+func TestHealthCheck_NodeNotFenceableBlocksUpgrade(t *testing.T) {
+	// master-1 lost its fencing: no agent is running, so it cannot be fenced at all.
+	node := createHealthyNodeStatus("master-1", []string{"192.168.1.11"})
+	node.FencingAgents = nil
+	for i := range node.Conditions {
+		switch node.Conditions[i].Type {
+		case pacmkrv1.NodeFencingAvailableConditionType:
+			node.Conditions[i].Status = metav1.ConditionFalse
+			node.Conditions[i].Reason = pacmkrv1.NodeFencingAvailableReasonUnavailable
+		case pacmkrv1.NodeFencingHealthyConditionType:
+			node.Conditions[i].Status = metav1.ConditionFalse
+			node.Conditions[i].Reason = pacmkrv1.NodeFencingHealthyReasonUnhealthy
+		case pacmkrv1.NodeHealthyConditionType:
+			node.Conditions[i].Status = metav1.ConditionFalse
+			node.Conditions[i].Reason = pacmkrv1.NodeHealthyReasonUnhealthy
+		}
+	}
+
+	cr := &pacmkrv1.PacemakerCluster{
+		Status: pacmkrv1.PacemakerClusterStatus{
+			LastUpdated: metav1.Now(),
+			Conditions:  createHealthyClusterConditions(),
+			Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
+				createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
+				node,
+			},
+		},
+	}
+
+	status := BuildHealthStatusFromCR(cr, false)
+	require.Equal(t, StatusError, status.OverallStatus, "a node that cannot be fenced must be an Error")
+	errs := strings.Join(status.Errors, "; ")
+	require.Contains(t, errs, "fencing unavailable", "the error must name fencing unavailability")
+	require.Contains(t, errs, "master-1", "the error must name the node that lost fencing")
+
+	// An Error blocks upgrades once the inertia window has elapsed.
+	controller := createTestHealthCheck()
+	controller.upgradeBlockedSince = time.Now().Add(-UpgradeableBlockInertia - time.Minute)
+	previous := &HealthStatus{OverallStatus: StatusHealthy, CRLastUpdated: time.Now().Add(-time.Minute)}
+	require.NoError(t, controller.updateOperatorStatus(context.TODO(), status, previous))
+
+	upgradeable, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+	require.NoError(t, err)
+	require.NotNil(t, upgradeable, "the upgradeable condition must be set")
+	require.Equal(t, operatorv1.ConditionFalse, upgradeable.Status,
+		"one node losing fenceability must block upgrades")
+	require.Equal(t, reasonPacemakerUnhealthy, upgradeable.Reason)
+}
+
+// TestHealthCheck_UpgradeBlockSurvivesRestart covers the blocking review comment that the inertia
+// timer lived only in memory. A restarted controller observing the same ongoing error must resume
+// the original UpgradeableBlockInertia deadline instead of starting a fresh window, which would
+// otherwise postpone the block by a full window on every restart. The episode start is persisted
+// as the PacemakerHealthCheckDegraded LastTransitionTime.
+func TestHealthCheck_UpgradeBlockSurvivesRestart(t *testing.T) {
+	tests := []struct {
+		name          string
+		episodeAge    time.Duration
+		expectBlocked bool
+	}{
+		{"within_original_window", 2 * time.Minute, false},
+		{"past_original_deadline", 11 * time.Minute, true},
+	}
+
+	errorStatus := &HealthStatus{OverallStatus: StatusError, Errors: []string{"Node master-0 is offline"}}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			episodeStart := time.Now().Add(-tt.episodeAge)
+
+			// The previous process persisted Degraded=True when the episode began.
+			controller := createTestHealthCheck()
+			controller.operatorClient = newOperatorClientWithConditions(operatorv1.OperatorCondition{
+				Type:               conditionTypePacemakerDegraded,
+				Status:             operatorv1.ConditionTrue,
+				Reason:             reasonPacemakerUnhealthy,
+				Message:            "Node master-0 is offline",
+				LastTransitionTime: metav1.NewTime(episodeStart),
+			})
+			// A restart carries no in-memory baseline and no previous observation.
+			require.True(t, controller.upgradeBlockedSince.IsZero())
+
+			require.NoError(t, controller.updateOperatorStatus(context.TODO(), errorStatus, nil))
+
+			// The resumed baseline is the persisted episode start, not the restart time.
+			controller.previousMu.Lock()
+			resumed := controller.upgradeBlockedSince
+			controller.previousMu.Unlock()
+			require.WithinDuration(t, episodeStart, resumed, 2*time.Second,
+				"the inertia baseline must resume the persisted episode start across a restart")
+
+			upgradeable, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+			require.NoError(t, err)
+			if tt.expectBlocked {
+				require.NotNil(t, upgradeable)
+				require.Equal(t, operatorv1.ConditionFalse, upgradeable.Status,
+					"an episode older than the inertia window must block immediately after a restart")
+			} else {
+				require.True(t, upgradeable == nil || upgradeable.Status != operatorv1.ConditionFalse,
+					"the remaining part of the original window must still be honoured")
+			}
+		})
+	}
+}
+
+// TestHealthCheck_sync_RestoresFastPathAfterBlockApplied covers the non-blocking review comment
+// that a nonzero upgradeBlockedSince kept bypassing the unchanged-status optimization forever.
+// The bypass must apply only while the block is still pending; once Upgradeable=False is written
+// for the episode, an unchanged CR timestamp can be skipped again.
+func TestHealthCheck_sync_RestoresFastPathAfterBlockApplied(t *testing.T) {
+	fixedTime := metav1.Now()
+	mockStatus := &pacmkrv1.PacemakerCluster{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: pacmkrv1.SchemeGroupVersion.String(),
+			Kind:       "PacemakerCluster",
+		},
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Status: pacmkrv1.PacemakerClusterStatus{
+			Conditions: createHealthyClusterConditions(),
+			Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
+				createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
+				createUnhealthyNodeStatus("master-1", []string{"192.168.1.11"}, pacmkrv1.PacemakerClusterResourceName("etcd")),
+			},
+			LastUpdated: fixedTime,
+		},
+	}
+
+	controller := createTestHealthCheckWithMockStatus(t, mockStatus)
+	controller.disruptionTracker = NewDisruptionTracker()
+	ctx := context.TODO()
+
+	// Sync #1 observes the Error and starts the damping clock.
+	require.NoError(t, controller.sync(ctx, nil))
+
+	// Force the inertia deadline to have elapsed.
+	controller.previousMu.Lock()
+	controller.upgradeBlockedSince = time.Now().Add(-UpgradeableBlockInertia - time.Minute)
+	controller.previousMu.Unlock()
+
+	// Sync #2 applies the block even though lastUpdated did not advance.
+	require.NoError(t, controller.sync(ctx, nil))
+	upgradeable, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+	require.NoError(t, err)
+	require.NotNil(t, upgradeable)
+	require.Equal(t, operatorv1.ConditionFalse, upgradeable.Status)
+	require.True(t, controller.upgradeBlockApplied, "the applied block must be recorded")
+
+	// Sync #3 sees the same lastUpdated. With the block already written, the unchanged-status fast
+	// path must be restored instead of re-evaluating on every periodic resync.
+	current, _, err := controller.getPacemakerStatus(ctx)
+	require.NoError(t, err)
+	require.Nil(t, current, "the unchanged-status fast path must be restored once the block is applied")
+}
+
+// TestHealthCheck_sync_RetriesPersistedEpisodeStartAfterReadFailure covers the remaining restart
+// case: when the persisted Degraded condition cannot be read, the lookup must not cache a fallback
+// "now" anchor, because that would lose the original deadline for the rest of the episode. The next
+// sync must retry the read and honour the original deadline.
+func TestHealthCheck_sync_RetriesPersistedEpisodeStartAfterReadFailure(t *testing.T) {
+	fixedTime := metav1.Now()
+	mockStatus := &pacmkrv1.PacemakerCluster{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: pacmkrv1.SchemeGroupVersion.String(),
+			Kind:       "PacemakerCluster",
+		},
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Status: pacmkrv1.PacemakerClusterStatus{
+			Conditions: createHealthyClusterConditions(),
+			Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
+				createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
+				createUnhealthyNodeStatus("master-1", []string{"192.168.1.11"}, pacmkrv1.PacemakerClusterResourceName("etcd")),
+			},
+			LastUpdated: fixedTime,
+		},
+	}
+
+	// The episode began past the inertia deadline before the restart, and the previous process
+	// persisted Degraded=True at that moment.
+	episodeStart := time.Now().Add(-UpgradeableBlockInertia - time.Minute)
+	persisted := newOperatorClientWithConditions(operatorv1.OperatorCondition{
+		Type:               conditionTypePacemakerDegraded,
+		Status:             operatorv1.ConditionTrue,
+		Reason:             reasonPacemakerUnhealthy,
+		Message:            "Node master-1 is unhealthy",
+		LastTransitionTime: metav1.NewTime(episodeStart),
+	})
+
+	controller := createTestHealthCheckWithMockStatus(t, mockStatus)
+	controller.disruptionTracker = NewDisruptionTracker()
+	controller.operatorClient = &flakyStaticPodOperatorClient{StaticPodOperatorClient: persisted, failures: 1}
+	ctx := context.TODO()
+
+	// Sync #1: reading the operator status fails. The sync must surface the error and must not
+	// cache a fallback anchor at the failure time.
+	require.Error(t, controller.sync(ctx, nil))
+	controller.previousMu.Lock()
+	cached := controller.upgradeBlockedSince
+	controller.previousMu.Unlock()
+	require.True(t, cached.IsZero(), "a failed read must not cache a fallback episode start")
+
+	// Sync #2: the read succeeds. The original deadline has already passed, so the block must be
+	// applied immediately rather than starting a fresh 10-minute window from the retry.
+	require.NoError(t, controller.sync(ctx, nil))
+	upgradeable, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+	require.NoError(t, err)
+	require.NotNil(t, upgradeable)
+	require.Equal(t, operatorv1.ConditionFalse, upgradeable.Status,
+		"the retry must honour the persisted deadline instead of restarting the window")
+}
+
+// flakyStaticPodOperatorClient wraps a StaticPodOperatorClient and fails the first N status reads,
+// to exercise retries of the persisted-episode lookup.
+type flakyStaticPodOperatorClient struct {
+	v1helpers.StaticPodOperatorClient
+	failures int
+}
+
+func (f *flakyStaticPodOperatorClient) GetStaticPodOperatorState() (*operatorv1.StaticPodOperatorSpec, *operatorv1.StaticPodOperatorStatus, string, error) {
+	if f.failures > 0 {
+		f.failures--
+		return nil, nil, "", fmt.Errorf("injected operator status read failure")
+	}
+	return f.StaticPodOperatorClient.GetStaticPodOperatorState()
+}
+
+// newOperatorClientWithConditions builds a fake operator client whose persisted status already
+// carries the given conditions, to simulate state surviving a controller restart.
+func newOperatorClientWithConditions(conditions ...operatorv1.OperatorCondition) v1helpers.StaticPodOperatorClient {
+	return v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{
+			OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed},
+		},
+		&operatorv1.StaticPodOperatorStatus{
+			OperatorStatus: operatorv1.OperatorStatus{Conditions: conditions},
+		},
+		nil,
+		nil,
+	)
+}
+
+// newOperatorClientWithUpgradeable builds a fake operator client that already carries a persisted
+// PacemakerHealthCheckUpgradeable condition with the given status and transition time, to simulate
+// state surviving a controller restart.
+func newOperatorClientWithUpgradeable(status operatorv1.ConditionStatus, reason string, transition time.Time) v1helpers.StaticPodOperatorClient {
+	return newOperatorClientWithConditions(operatorv1.OperatorCondition{
+		Type:               conditionTypePacemakerUpgradeable,
+		Status:             status,
+		Reason:             reason,
+		LastTransitionTime: metav1.NewTime(transition),
+	})
+}
+
+// TestHealthCheck_updateOperatorStatus_RestartMissingCRHonorsGrace is a regression test for the
+// case where a long-healthy cluster restarts and the CR is momentarily missing. The persisted
+// Upgradeable=True transitioned long ago; the grace period must still be honored (measured from
+// the first Unknown observation), not skipped by seeding from that old transition time.
+func TestHealthCheck_updateOperatorStatus_RestartMissingCRHonorsGrace(t *testing.T) {
+	controller := createTestHealthCheck()
+	// Upgradeable has been True for two days (healthy cluster), now restarted.
+	controller.operatorClient = newOperatorClientWithUpgradeable(
+		operatorv1.ConditionTrue, "AsExpected", time.Now().Add(-48*time.Hour))
+	ctx := context.TODO()
+
+	// CR missing after restart: no timestamp anywhere, no in-memory previous.
+	missingCR := &HealthStatus{
+		OverallStatus: StatusUnknown,
+		Warnings:      []string{},
+		Errors:        []string{"PacemakerCluster CR not found in cache"},
+	}
+
+	// First sync must leave both conditions unchanged - grace starts now, not 48h ago.
+	require.NoError(t, controller.updateOperatorStatus(ctx, missingCR, nil))
+	upgradeable, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+	require.NoError(t, err)
+	require.NotNil(t, upgradeable)
+	require.Equal(t, operatorv1.ConditionTrue, upgradeable.Status, "first sync after restart must not skip the grace period")
+	degraded, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerDegraded)
+	require.NoError(t, err)
+	require.Nil(t, degraded, "first sync after restart must not degrade")
+
+	// Sustained Unknown: once the grace period has elapsed, upgrades are blocked and etcd degrades.
+	controller.previousMu.Lock()
+	controller.unknownSince = time.Now().Add(-StatusUnknownDegradedThreshold - time.Minute)
+	controller.previousMu.Unlock()
+
+	require.NoError(t, controller.updateOperatorStatus(ctx, missingCR, nil))
+	upgradeable, err = controller.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+	require.NoError(t, err)
+	require.NotNil(t, upgradeable)
+	require.Equal(t, operatorv1.ConditionFalse, upgradeable.Status, "sustained Unknown past grace must block upgrades")
+	degraded, err = controller.getCurrentPacemakerCondition(conditionTypePacemakerDegraded)
+	require.NoError(t, err)
+	require.NotNil(t, degraded)
+	require.Equal(t, operatorv1.ConditionTrue, degraded.Status, "sustained Unknown past grace must degrade")
 }
 
 func TestHealthCheck_recordHealthCheckEvents(t *testing.T) {
@@ -1126,10 +1713,10 @@ func TestGetNodeConditionErrorsAndWarnings(t *testing.T) {
 	}
 }
 
-// TestHealthCheck_FencingRedundancyWarning tests fencing redundancy warnings in various scenarios.
-// Fencing redundancy degraded (FencingHealthy=False but FencingAvailable=True) should be
+// TestCheckNodeConditions_FencingDegradedWarning tests fencing degradation warnings in
+// various scenarios. Fencing degraded (FencingHealthy=False but FencingAvailable=True) should be
 // reported as a warning, not an error, and should be captured regardless of overall node health.
-func TestCheckNodeConditions_FencingRedundancyWarning(t *testing.T) {
+func TestCheckNodeConditions_FencingDegradedWarning(t *testing.T) {
 	tests := []struct {
 		name                   string
 		nodeHealthy            bool   // Overall node healthy condition
@@ -1149,7 +1736,7 @@ func TestCheckNodeConditions_FencingRedundancyWarning(t *testing.T) {
 		},
 		{
 			name:                   "fencing_degraded_node_healthy",
-			nodeHealthy:            true, // Node is healthy overall, but fencing redundancy is degraded
+			nodeHealthy:            true, // Node is healthy overall, but fencing is degraded
 			inMaintenance:          false,
 			expectWarnings:         true,
 			expectErrors:           false,
@@ -1232,6 +1819,58 @@ func TestCheckNodeConditions_FencingRedundancyWarning(t *testing.T) {
 	}
 }
 
+// TestIsFencingDegraded bounds the exact signal a fencing warning reports on: fencing
+// available but not healthy. Unavailable fencing is an Error handled elsewhere and must not
+// trip this predicate.
+func TestIsFencingDegraded(t *testing.T) {
+	now := metav1.Now()
+	cond := func(t string, s metav1.ConditionStatus) metav1.Condition {
+		return metav1.Condition{Type: t, Status: s, LastTransitionTime: now}
+	}
+
+	tests := []struct {
+		name       string
+		conditions []metav1.Condition
+		expect     bool
+	}{
+		{
+			name: "available_but_not_healthy_is_degraded",
+			conditions: []metav1.Condition{
+				cond(pacmkrv1.NodeFencingAvailableConditionType, metav1.ConditionTrue),
+				cond(pacmkrv1.NodeFencingHealthyConditionType, metav1.ConditionFalse),
+			},
+			expect: true,
+		},
+		{
+			name: "available_and_healthy_is_not_degraded",
+			conditions: []metav1.Condition{
+				cond(pacmkrv1.NodeFencingAvailableConditionType, metav1.ConditionTrue),
+				cond(pacmkrv1.NodeFencingHealthyConditionType, metav1.ConditionTrue),
+			},
+			expect: false,
+		},
+		{
+			name: "unavailable_is_an_error_not_degraded",
+			conditions: []metav1.Condition{
+				cond(pacmkrv1.NodeFencingAvailableConditionType, metav1.ConditionFalse),
+				cond(pacmkrv1.NodeFencingHealthyConditionType, metav1.ConditionFalse),
+			},
+			expect: false,
+		},
+		{
+			name:       "missing_fencing_conditions_is_not_degraded",
+			conditions: []metav1.Condition{cond(pacmkrv1.NodeOnlineConditionType, metav1.ConditionTrue)},
+			expect:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expect, isFencingDegraded(tt.conditions))
+		})
+	}
+}
+
 // TestHealthCheck_WarningsClearedEvent tests PacemakerWarningsCleared and PacemakerHealthy
 // event firing across various state transitions.
 func TestHealthCheck_WarningsClearedEvent(t *testing.T) {
@@ -1246,7 +1885,7 @@ func TestHealthCheck_WarningsClearedEvent(t *testing.T) {
 			name: "warning_to_healthy",
 			previousStatus: &HealthStatus{
 				OverallStatus: StatusWarning,
-				Warnings:      []string{"master-0: " + msgFencingRedundancyLost},
+				Warnings:      []string{"master-0: " + msgFencingDegraded},
 				Errors:        []string{},
 			},
 			currentStatus: &HealthStatus{
@@ -1276,7 +1915,7 @@ func TestHealthCheck_WarningsClearedEvent(t *testing.T) {
 			name: "error_with_warnings_to_error_without_warnings",
 			previousStatus: &HealthStatus{
 				OverallStatus: StatusError,
-				Warnings:      []string{"master-0: " + msgFencingRedundancyLost},
+				Warnings:      []string{"master-0: " + msgFencingDegraded},
 				Errors:        []string{"Critical error"},
 			},
 			currentStatus: &HealthStatus{
@@ -1291,7 +1930,7 @@ func TestHealthCheck_WarningsClearedEvent(t *testing.T) {
 			name: "error_with_warnings_to_healthy",
 			previousStatus: &HealthStatus{
 				OverallStatus: StatusError,
-				Warnings:      []string{"master-0: " + msgFencingRedundancyLost},
+				Warnings:      []string{"master-0: " + msgFencingDegraded},
 				Errors:        []string{"Critical error"},
 			},
 			currentStatus: &HealthStatus{
