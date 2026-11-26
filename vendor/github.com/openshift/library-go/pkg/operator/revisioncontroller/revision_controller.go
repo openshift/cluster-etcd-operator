@@ -400,7 +400,7 @@ func (c RevisionController) sync(ctx context.Context, syncCtx factory.SyncContex
 	if err != nil {
 		return err
 	}
-	if latestObservedRevision != 0 && operatorStatus.LatestAvailableRevision != latestObservedRevision {
+	if latestObservedRevision > 0 && latestObservedRevision > operatorStatus.LatestAvailableRevision {
 		// Then make sure that revision number is what's in the operator status
 		status := applyoperatorv1.OperatorStatus().
 			WithLatestAvailableRevision(latestObservedRevision)
@@ -410,6 +410,18 @@ func (c RevisionController) sync(ctx context.Context, syncCtx factory.SyncContex
 		}
 		// we will be called again because the update will self-feed the informer
 		return nil
+	}
+	if latestObservedRevision < operatorStatus.LatestAvailableRevision {
+		// The operator status advertises a revision that is newer than the highest ready revision-status configmap.
+		// This can happen transiently when our configmap view lags behind, or permanently when the backing storage
+		// was rolled back (e.g. after an etcd restore) and the write marking the revision as ready was lost.
+		// LatestAvailableRevision must only increase (enforced by API validation), so attempting to lower it would
+		// fail on every sync and block any further revisions from being created.
+		// Instead, continue with the advertised revision: if its content no longer matches the current inputs,
+		// a new revision is rolled out on top of it, which brings the status and the ready revisions back in sync.
+		// We deliberately do not re-assemble the advertised revision in place, as it may already be installed.
+		syncCtx.Recorder().Warningf("LatestAvailableRevisionNotReady", "operator status latestAvailableRevision %d is newer than the latest ready revision %d, not lowering it",
+			operatorStatus.LatestAvailableRevision, latestObservedRevision)
 	}
 
 	if shouldCreateNewRevision, err := c.revisionPrecondition(ctx); err != nil || !shouldCreateNewRevision {

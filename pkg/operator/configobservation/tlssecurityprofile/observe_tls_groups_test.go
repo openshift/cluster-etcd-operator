@@ -8,6 +8,7 @@ import (
 	"github.com/openshift/api/features"
 	configlistersv1 "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation"
+	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -16,17 +17,18 @@ import (
 )
 
 func TestObserveTLSSecurityProfile(t *testing.T) {
-	intermediate := tlsGroupNames(configv1.TLSProfiles[configv1.TLSProfileIntermediateType].Groups)
+	intermediateGroups := configv1.TLSProfiles[configv1.TLSProfileIntermediateType].Groups
+	intermediateCurvePrefs := tlsGroupsToCurvePreferences(intermediateGroups)
 	disabled := featuregates.NewHardcodedFeatureGateAccess(nil, []configv1.FeatureGateName{features.FeatureGateTLSGroupPreferences})
 	enabled := featuregates.NewHardcodedFeatureGateAccess([]configv1.FeatureGateName{features.FeatureGateTLSGroupPreferences}, nil)
 
 	tests := []struct {
-		name          string
-		accessor      featuregates.FeatureGateAccess
-		apiServer     *configv1.APIServer
-		existing      map[string]any
-		wantGroups    []string
-		wantGroupsKey bool
+		name              string
+		accessor          featuregates.FeatureGateAccess
+		apiServer         *configv1.APIServer
+		existing          map[string]any
+		wantCurvePrefs    []int64
+		wantCurvePrefsKey bool
 	}{
 		{
 			name:     "gate disabled does not observe named-profile groups",
@@ -38,13 +40,13 @@ func TestObserveTLSSecurityProfile(t *testing.T) {
 			},
 		},
 		{
-			name:          "gate enabled with no APIServer uses intermediate groups",
-			accessor:      enabled,
-			wantGroups:    intermediate,
-			wantGroupsKey: true,
+			name:              "gate enabled with no APIServer uses intermediate curve preferences",
+			accessor:          enabled,
+			wantCurvePrefs:    intermediateCurvePrefs,
+			wantCurvePrefsKey: true,
 		},
 		{
-			name:     "gate enabled uses custom groups",
+			name:     "gate enabled uses custom groups converted to curve preferences",
 			accessor: enabled,
 			apiServer: &configv1.APIServer{
 				Spec: configv1.APIServerSpec{
@@ -59,8 +61,8 @@ func TestObserveTLSSecurityProfile(t *testing.T) {
 					},
 				},
 			},
-			wantGroups:    []string{"X25519", "secp256r1"},
-			wantGroupsKey: true,
+			wantCurvePrefs:    tlsGroupsToCurvePreferences([]configv1.TLSGroup{configv1.TLSGroupX25519, configv1.TLSGroupSecP256r1}),
+			wantCurvePrefsKey: true,
 		},
 		{
 			name:     "gate enabled with custom groups omitted stores an empty list",
@@ -77,8 +79,8 @@ func TestObserveTLSSecurityProfile(t *testing.T) {
 					},
 				},
 			},
-			wantGroups:    []string{},
-			wantGroupsKey: true,
+			wantCurvePrefs:    []int64{},
+			wantCurvePrefsKey: true,
 		},
 	}
 
@@ -92,26 +94,44 @@ func TestObserveTLSSecurityProfile(t *testing.T) {
 			if len(errs) > 0 {
 				t.Fatalf("unexpected errors: %v", errs)
 			}
-			gotGroups, found, err := unstructured.NestedStringSlice(got, groupsPath...)
+			gotCurvePrefsRaw, found, err := unstructured.NestedSlice(got, curvePreferencesPath...)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if found != tt.wantGroupsKey {
-				t.Fatalf("groups key found=%v, want %v, config=%v", found, tt.wantGroupsKey, got)
+			if found != tt.wantCurvePrefsKey {
+				t.Fatalf("curve preferences key found=%v, want %v, config=%v", found, tt.wantCurvePrefsKey, got)
 			}
-			if diff := cmp.Diff(tt.wantGroups, gotGroups); diff != "" {
-				t.Fatalf("groups mismatch (-want +got):\n%s", diff)
+
+			// Convert []interface{} to []int64
+			var gotCurvePrefs []int64
+			if gotCurvePrefsRaw != nil {
+				gotCurvePrefs = make([]int64, 0, len(gotCurvePrefsRaw))
+				for _, cpRaw := range gotCurvePrefsRaw {
+					switch v := cpRaw.(type) {
+					case int64:
+						gotCurvePrefs = append(gotCurvePrefs, v)
+					case int:
+						gotCurvePrefs = append(gotCurvePrefs, int64(v))
+					default:
+						t.Fatalf("unexpected curve preference type: %T", cpRaw)
+					}
+				}
+			}
+
+			if diff := cmp.Diff(tt.wantCurvePrefs, gotCurvePrefs); diff != "" {
+				t.Fatalf("curve preferences mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
 }
 
-func tlsGroupNames(groups []configv1.TLSGroup) []string {
-	names := make([]string, len(groups))
-	for i, group := range groups {
-		names[i] = string(group)
+func tlsGroupsToCurvePreferences(groups []configv1.TLSGroup) []int64 {
+	curvePrefs32, _ := crypto.TLSGroupsToCurvePreferences(groups)
+	curvePrefs := make([]int64, len(curvePrefs32))
+	for i, cp := range curvePrefs32 {
+		curvePrefs[i] = int64(cp)
 	}
-	return names
+	return curvePrefs
 }
 
 func newAPIServerLister(t *testing.T, apiServer *configv1.APIServer) configlistersv1.APIServerLister {

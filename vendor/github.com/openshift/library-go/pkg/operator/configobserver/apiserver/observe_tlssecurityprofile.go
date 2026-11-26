@@ -15,6 +15,10 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+const (
+	tempTLSGroupsField = "tempServingInfoGroupsIgnore"
+)
+
 // ObserveTLSSecurityProfile observes APIServer.Spec.TLSSecurityProfile field and sets
 // the ServingInfo.MinTLSVersion, ServingInfo.CipherSuites fields of observed config
 func ObserveTLSSecurityProfile(genericListers configobserver.Listers, recorder events.Recorder, existingConfig map[string]interface{}) (map[string]interface{}, []error) {
@@ -33,6 +37,36 @@ func ObserveTLSSecurityProfileWithPaths(genericListers configobserver.Listers, r
 // that accept group names as CLI arguments.
 func ObserveTLSSecurityProfileWithGroupPaths(genericListers configobserver.Listers, recorder events.Recorder, existingConfig map[string]interface{}, minTLSVersionPath, cipherSuitesPath, groupsPath []string) (map[string]interface{}, []error) {
 	return innerTLSSecurityProfileObservations(genericListers, recorder, existingConfig, minTLSVersionPath, cipherSuitesPath, groupsPath)
+}
+
+// ObserveTLSSecurityProfileWithGroupsConversion observes TLS groups from APIServer config and converts them to curve preferences.
+// It handles the full lifecycle: reading existing curves, observing new groups, checking for filtered groups and converting groups to curves.
+// Uses servingInfo paths and int64 type for curve preferences.
+func ObserveTLSSecurityProfileWithGroupsConversion(listers configobserver.Listers, recorder events.Recorder, existingConfig map[string]interface{}) (map[string]interface{}, []error) {
+	return innerObserveTLSSecurityProfileWithGroupsConversion[int64](
+		listers,
+		recorder,
+		existingConfig,
+		ObserveTLSSecurityProfileWithGroupPaths,
+		[]string{"servingInfo", "minTLSVersion"},
+		[]string{"servingInfo", "cipherSuites"},
+		[]string{"servingInfo", "curvePreferences"},
+	)
+}
+
+// ObserveTLSSecurityProfileWithGroupsConversionToArguments observes TLS groups from APIServer config and converts them to curve preferences for apiServerArguments.
+// It handles the full lifecycle: reading existing curves, observing new groups, checking for filtered groups and converting groups to curves.
+// Uses apiServerArguments paths and string type for curve preferences.
+func ObserveTLSSecurityProfileWithGroupsConversionToArguments(listers configobserver.Listers, recorder events.Recorder, existingConfig map[string]interface{}) (map[string]interface{}, []error) {
+	return innerObserveTLSSecurityProfileWithGroupsConversion[string](
+		listers,
+		recorder,
+		existingConfig,
+		ObserveTLSSecurityProfileWithGroupPaths,
+		[]string{"apiServerArguments", "tls-min-version"},
+		[]string{"apiServerArguments", "tls-cipher-suites"},
+		[]string{"apiServerArguments", "tls-curve-preferences"},
+	)
 }
 
 // ObserveTLSSecurityProfileToArguments observes APIServer.Spec.TLSSecurityProfile field and sets
@@ -57,13 +91,13 @@ func innerTLSSecurityProfileObservations(genericListers configobserver.Listers, 
 
 	currentMinTLSVersion, _, versionErr := unstructured.NestedString(existingConfig, minTLSVersionPath...)
 	if versionErr != nil {
-		errs = append(errs, fmt.Errorf("failed to retrieve spec.servingInfo.minTLSVersion: %v", versionErr))
+		errs = append(errs, fmt.Errorf("failed to retrieve %v: %v", minTLSVersionPath, versionErr))
 		// keep going on read error from existing config
 	}
 
 	currentCipherSuites, _, suitesErr := unstructured.NestedStringSlice(existingConfig, cipherSuitesPath...)
 	if suitesErr != nil {
-		errs = append(errs, fmt.Errorf("failed to retrieve spec.servingInfo.cipherSuites: %v", suitesErr))
+		errs = append(errs, fmt.Errorf("failed to retrieve %v: %v", cipherSuitesPath, suitesErr))
 		// keep going on read error from existing config
 	}
 
@@ -119,6 +153,127 @@ func innerTLSSecurityProfileObservations(genericListers configobserver.Listers, 
 		}
 	}
 
+	return observedConfig, errs
+}
+
+// getFilteredOutGroups checks if any TLS groups from a Custom profile were filtered out (e.g., by FIPS)
+// and returns the list of filtered groups. Returns an error if the APIServer CR cannot be retrieved (NotFound is acceptable).
+func getFilteredOutGroups(listers APIServerLister, remainingGroups []string) ([]configv1.TLSGroup, error) {
+	apiServer, err := listers.APIServerLister().Get("cluster")
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get apiserver/cluster: %w", err)
+	}
+
+	if apiServer == nil || apiServer.Spec.TLSSecurityProfile == nil {
+		return nil, nil
+	}
+
+	if apiServer.Spec.TLSSecurityProfile.Type != configv1.TLSProfileCustomType ||
+		apiServer.Spec.TLSSecurityProfile.Custom == nil ||
+		len(apiServer.Spec.TLSSecurityProfile.Custom.Groups) <= len(remainingGroups) {
+		return nil, nil
+	}
+
+	groupsSet := make(map[string]bool)
+	for _, g := range remainingGroups {
+		groupsSet[g] = true
+	}
+
+	filteredOut := []configv1.TLSGroup{}
+	for _, originalGroup := range apiServer.Spec.TLSSecurityProfile.Custom.Groups {
+		if !groupsSet[string(originalGroup)] {
+			filteredOut = append(filteredOut, originalGroup)
+		}
+	}
+
+	return filteredOut, nil
+}
+
+// observeTLSSecurityProfileWithGroupPathsFunc is the signature for observing TLS security profile with groups.
+type observeTLSSecurityProfileWithGroupPathsFunc func(
+	listers configobserver.Listers,
+	recorder events.Recorder,
+	existingConfig map[string]interface{},
+	minTLSVersionPath []string,
+	cipherSuitesPath []string,
+	groupsPath []string,
+) (map[string]interface{}, []error)
+
+// innerObserveTLSSecurityProfileWithGroupsConversion is the internal implementation that accepts a custom
+// observeTLSSecurityProfile function for testability (e.g., to mock FIPS filtering).
+// It accepts custom paths for minTLSVersion, cipherSuites, and curvePreferences to support different config schemas.
+// The curve type specifies whether to use int64 (for servingInfo) or string (for apiServerArguments).
+func innerObserveTLSSecurityProfileWithGroupsConversion[T int64 | string](
+	listers configobserver.Listers,
+	recorder events.Recorder,
+	existingConfig map[string]interface{},
+	observeTLSSecurityProfile observeTLSSecurityProfileWithGroupPathsFunc,
+	minTLSVersionPath []string,
+	cipherSuitesPath []string,
+	curvePreferencesPath []string,
+) (map[string]interface{}, []error) {
+	var errs []error
+	var observedConfig map[string]interface{}
+
+	if _, err := configobserver.CurvePreferencesToTLSGroups[T](existingConfig, curvePreferencesPath, []string{tempTLSGroupsField}); err != nil {
+		// keep going on read error from existing config
+		errs = append(errs, err)
+	}
+
+	defer func() {
+		unstructured.RemoveNestedField(existingConfig, tempTLSGroupsField)
+		unstructured.RemoveNestedField(observedConfig, tempTLSGroupsField)
+	}()
+
+	var observeErrs []error
+	observedConfig, observeErrs = observeTLSSecurityProfile(
+		listers,
+		recorder,
+		existingConfig,
+		minTLSVersionPath,
+		cipherSuitesPath,
+		[]string{tempTLSGroupsField},
+	)
+	if len(observeErrs) > 0 {
+		// accumulate errors but keep going - we still need to convert groups to curves
+		errs = append(errs, observeErrs...)
+	}
+
+	// Copy existing curve preferences to observedConfig so TLSGroupsToCurvePreferences can compare against them
+	existingCurvePreferences, found, err := unstructured.NestedSlice(existingConfig, curvePreferencesPath...)
+	if err != nil {
+		// keep going on read error from existing config
+		errs = append(errs, err)
+	} else if found {
+		unstructured.SetNestedSlice(observedConfig, existingCurvePreferences, curvePreferencesPath...)
+	}
+
+	// Check if we need to set curvePreferences to empty
+	groups, found, err := unstructured.NestedStringSlice(observedConfig, tempTLSGroupsField)
+	if err == nil && found {
+		// Check if this is a Custom profile and if any groups were filtered out (e.g., by FIPS)
+		if filteredOut, err := getFilteredOutGroups(listers.(APIServerLister), groups); err != nil {
+			errs = append(errs, err)
+		} else if len(filteredOut) > 0 {
+			errs = append(errs, fmt.Errorf("TLS groups filtered out from custom profile: %v", filteredOut))
+		}
+
+		if len(groups) == 0 {
+			// Empty groups list - set curvePreferences to empty
+			unstructured.SetNestedSlice(observedConfig, []interface{}{}, curvePreferencesPath...)
+		} else if unrecognizedGroups, err := configobserver.TLSGroupsToCurvePreferences[T](observedConfig, []string{tempTLSGroupsField}, curvePreferencesPath); err != nil {
+			errs = append(errs, err)
+		} else if len(unrecognizedGroups) > 0 {
+			// If all groups are unrecognized, set curvePreferences to empty
+			if len(groups) == len(unrecognizedGroups) {
+				unstructured.SetNestedSlice(observedConfig, []interface{}{}, curvePreferencesPath...)
+			}
+			errs = append(errs, fmt.Errorf("unrecognized TLS groups: %v", unrecognizedGroups))
+		}
+	}
 	return observedConfig, errs
 }
 

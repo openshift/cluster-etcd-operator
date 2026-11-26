@@ -397,9 +397,9 @@ func getCurvePreferences(envVarContext envVarContext) (map[string]string, error)
 	if err := yaml.Unmarshal(envVarContext.spec.ObservedConfig.Raw, &observedConfig); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal the observedConfig: %w", err)
 	}
-	observedGroups, found, err := unstructured.NestedStringSlice(observedConfig, "servingInfo", "groups")
+	observedCurvePreferencesRaw, found, err := unstructured.NestedSlice(observedConfig, "servingInfo", "curvePreferences")
 	if err != nil {
-		return nil, fmt.Errorf("couldn't get groups from observedConfig: %w", err)
+		return nil, fmt.Errorf("couldn't get TLS curve preferences from observedConfig: %w", err)
 	}
 	var groups []string
 	switch {
@@ -409,16 +409,36 @@ func getCurvePreferences(envVarContext envVarContext) (map[string]string, error)
 			return nil, fmt.Errorf("unable to determine bootstrap status for TLS groups fallback: %w", err)
 		}
 		if bootstrapComplete {
-			return nil, fmt.Errorf("servingInfo.groups not found in observedConfig")
+			return nil, fmt.Errorf("servingInfo.curvePreferences not found in observedConfig")
 		}
-		klog.Warning("getCurvePreferences: observedConfig has no groups during bootstrap, falling back to TLSProfileIntermediateType groups")
+		klog.Warning("getCurvePreferences: observedConfig has no curve preferences during bootstrap, falling back to TLSProfileIntermediateType defaults")
 		groups = intermediateTLSGroupNames()
-	case len(observedGroups) == 0:
+	case len(observedCurvePreferencesRaw) == 0:
 		return nil, nil
 	default:
-		groups = observedGroups
+		for i, cpRaw := range observedCurvePreferencesRaw {
+			var curvePreference int64
+			switch v := cpRaw.(type) {
+			case int64:
+				curvePreference = v
+			case float64:
+				if v != float64(int64(v)) {
+					return nil, fmt.Errorf("invalid curve preference: non-integral float64 value %v", v)
+				}
+				curvePreference = int64(v)
+			default:
+				return nil, fmt.Errorf("invalid curve preference type at index %d: expected int64, got %T", i, cpRaw)
+			}
+			if curvePreference < 0 || curvePreference > 65535 {
+				return nil, fmt.Errorf("curve preference value %d is out of range for uint16 (0-65535)", curvePreference)
+			}
+			group, exists := crypto.CurveIDToTLSGroup(tls.CurveID(curvePreference))
+			if !exists {
+				return nil, fmt.Errorf("unable to convert an unrecognized curve ID %v to a group name", curvePreference)
+			}
+			groups = append(groups, string(group))
+		}
 	}
-
 	return curvePreferencesEnv(groups)
 }
 
