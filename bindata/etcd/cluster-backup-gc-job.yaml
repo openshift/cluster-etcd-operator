@@ -29,7 +29,7 @@ spec:
               cpu: 10m
           securityContext:
             privileged: true
-      priorityClassName: system-node-critical
+      priorityClassName: system-cluster-critical
       activeDeadlineSeconds: 900
       nodeSelector:
         node-role.kubernetes.io/control-plane: ""

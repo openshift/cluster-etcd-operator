@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	goflag "flag"
 	"fmt"
 	"iter"
@@ -13,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 
@@ -24,15 +26,19 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/pager"
 	"k8s.io/klog/v2"
 )
 
 // EtcdBackup API restricts name length to 63 so it can be used in label values
 const maxNameLength = 63
+
+var errSkipExecution = errors.New("skip schedule execution")
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
@@ -215,34 +221,60 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 		return nil
 	}
 
-	// Check for active backups that belong to the policy
-	backupList, err := backupClient.List(ctx, v1.ListOptions{
-		LabelSelector: backuphelpers.LabelEtcdBackupPolicy + "=" + backupPolicy.Name,
-	})
-	if err != nil {
-		return err
-	}
 	isAllNodes := backupPolicy.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypeLocal && backupPolicy.Spec.Storage.Local.Distribution == operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes
 	existingLocalBackupHostnames := map[string]struct{}{}
-	for _, backup := range backupList.Items {
+	var latestLocalBackup localBackup
+
+	backupPager := pager.New(func(ctx context.Context, opts v1.ListOptions) (runtime.Object, error) {
+		return backupClient.List(ctx, opts)
+	})
+	err = backupPager.EachListItem(ctx, v1.ListOptions{
+		LabelSelector: backuphelpers.LabelEtcdBackupPolicy + "=" + backupPolicy.Name,
+	}, func(obj runtime.Object) error {
+		backup, ok := obj.(*operatorv1alpha1.EtcdBackup)
+		if !ok {
+			return fmt.Errorf("expected operator.openshift.io/v1alpha1 EtcdBackup, got %s", obj.GetObjectKind().GroupVersionKind().String())
+		}
+
 		if isAllNodes {
 			// In Local AllNodes mode, ensure a backup exists for each selected node even if previously running backups exist for some nodes.
 			// If backups are partially created and then a transient error occurs, the LabelEtcdBackupPolicyRun check ensures we retry idempotently.
 			// If backups on a single node are indefinitely stuck, this ensures backups are still taken on other nodes.
-			if backup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] == name || !backuphelpers.IsBackupFinished(&backup) {
+			if backup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] == name || !backuphelpers.IsBackupFinished(backup) {
 				// Only check for local backups in case the policy switched from PVC -> Local AllNodes.
 				// Even if the PVC backup was assigned to a specific node, it should not count against the backups to be created for the Local policy.
 				if hostname := backup.Spec.NodeSelector[corev1.LabelHostname]; backup.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypeLocal && hostname != "" {
 					existingLocalBackupHostnames[hostname] = struct{}{}
 				}
 			}
-		} else if !backuphelpers.IsBackupFinished(&backup) {
+		} else if !backuphelpers.IsBackupFinished(backup) {
 			klog.Infof("skipping schedule execution for EtcdBackupPolicy %s: active backups found", backupPolicy.Name)
-			return nil
+			return errSkipExecution
 		} else if backup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] == name {
 			klog.Infof("skipping schedule execution for EtcdBackupPolicy %s: existing backup found for this run", backupPolicy.Name)
+			return errSkipExecution
+		}
+
+		// Find latest local backup for Local SingleNode round robin
+		if backup.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypeLocal && backup.Spec.NodeSelector[corev1.LabelHostname] != "" {
+			if latestLocalBackup.name == "" ||
+				backup.CreationTimestamp.After(latestLocalBackup.creationTimestamp) ||
+				(backup.CreationTimestamp.Time.Equal(latestLocalBackup.creationTimestamp) && backup.Name > latestLocalBackup.name) {
+				latestLocalBackup = localBackup{
+					name:              backup.Name,
+					creationTimestamp: backup.CreationTimestamp.Time,
+					nodeName:          backup.Status.NodeName,
+					hostname:          backup.Spec.NodeSelector[corev1.LabelHostname],
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, errSkipExecution) {
 			return nil
 		}
+		return err
 	}
 
 	// Build the set of EtcdBackups to create. Local backups are taken once per control plane node and pinned to that
@@ -266,7 +298,7 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 			},
 		})
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
-		for node := range iterLocalNodes(backupPolicy, backupList, nodeList) {
+		for node := range iterLocalNodes(backupPolicy, latestLocalBackup, nodeList) {
 			hostName := node.Labels[corev1.LabelHostname]
 			if _, ok := existingLocalBackupHostnames[hostName]; ok {
 				continue
@@ -322,11 +354,11 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 	return utilerrors.NewAggregate(errs)
 }
 
-func iterLocalNodes(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, backupList *operatorv1alpha1.EtcdBackupList, nodeList *corev1.NodeList) iter.Seq[corev1.Node] {
+func iterLocalNodes(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, latestLocalBackup localBackup, nodeList *corev1.NodeList) iter.Seq[corev1.Node] {
 	return func(yield func(corev1.Node) bool) {
 		switch backupPolicy.Spec.Storage.Local.Distribution {
 		case "", operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeSingleNode:
-			if node, ok := nextRoundRobinNode(backupList, nodeList); ok {
+			if node, ok := nextRoundRobinNode(latestLocalBackup, nodeList); ok {
 				yield(node)
 			}
 		case operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes:
@@ -348,7 +380,7 @@ func iterLocalNodes(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, backupList 
 //
 // The most recent backup is used regardless of outcome so that a node which persistently fails backups does not
 // prevent the remaining nodes from being rotated through.
-func nextRoundRobinNode(backupList *operatorv1alpha1.EtcdBackupList, nodeList *corev1.NodeList) (corev1.Node, bool) {
+func nextRoundRobinNode(latestLocalBackup localBackup, nodeList *corev1.NodeList) (corev1.Node, bool) {
 	nodes := make([]corev1.Node, 0, len(nodeList.Items))
 	for _, node := range nodeList.Items {
 		if node.Labels[corev1.LabelHostname] != "" {
@@ -362,7 +394,7 @@ func nextRoundRobinNode(backupList *operatorv1alpha1.EtcdBackupList, nodeList *c
 		return strings.Compare(a.Name, b.Name)
 	})
 
-	latestNodeName := latestLocalBackupNodeName(backupList, nodes)
+	latestNodeName := latestNodeName(latestLocalBackup, nodeList)
 	if latestNodeName == "" {
 		return nodes[0], true
 	}
@@ -374,43 +406,37 @@ func nextRoundRobinNode(backupList *operatorv1alpha1.EtcdBackupList, nodeList *c
 	return nodes[0], true
 }
 
-// latestLocalBackupNodeName returns the name of the node targeted by the most recently created node-pinned backup in
-// the list, or an empty string if there is none. Ties on creation timestamp (which has second granularity) are broken
-// by backup name so the result is deterministic.
+// latestNodeName returns the name of the node targeted by the most recently created node-pinned backup in
+// the list, or an empty string if there is none.
 //
 // Backups are pinned by hostname label, and the node name is only recorded in status once the backup job has been
 // scheduled. If the status is not yet populated, the node name is resolved from the hostname via the given nodes,
 // falling back to the hostname itself when the node no longer exists (node name and hostname typically match).
-func latestLocalBackupNodeName(backupList *operatorv1alpha1.EtcdBackupList, nodes []corev1.Node) string {
-	var latest *operatorv1alpha1.EtcdBackup
-	for i := range backupList.Items {
-		backup := &backupList.Items[i]
-		if backup.Spec.Storage.Type != operatorv1alpha1.EtcdBackupStorageTypeLocal || backup.Spec.NodeSelector[corev1.LabelHostname] == "" {
-			continue
-		}
-		if latest == nil ||
-			backup.CreationTimestamp.After(latest.CreationTimestamp.Time) ||
-			(backup.CreationTimestamp.Equal(&latest.CreationTimestamp) && backup.Name > latest.Name) {
-			latest = backup
-		}
+func latestNodeName(latestLocalBackup localBackup, nodeList *corev1.NodeList) string {
+	if latestLocalBackup.nodeName != "" {
+		return latestLocalBackup.nodeName
 	}
-	if latest == nil {
-		return ""
-	}
-	if latest.Status.NodeName != "" {
-		return latest.Status.NodeName
-	}
-	hostname := latest.Spec.NodeSelector[corev1.LabelHostname]
-	for _, node := range nodes {
-		if node.Labels[corev1.LabelHostname] == hostname {
-			return node.Name
+
+	if latestLocalBackup.hostname != "" {
+		// In case nodeName status wasn't set on backup, fallback to finding node by hostname
+		for _, node := range nodeList.Items {
+			if node.Labels[corev1.LabelHostname] == latestLocalBackup.hostname {
+				return node.Name
+			}
 		}
 	}
-	return hostname
+
+	return latestLocalBackup.hostname
 }
 
 func shortHash(parts ...string) string {
 	hash := sha256.Sum256([]byte(strings.Join(parts, "")))
 	shortHash := hex.EncodeToString(hash[:])[:10]
 	return shortHash
+}
+
+type localBackup struct {
+	name               string
+	creationTimestamp  time.Time
+	nodeName, hostname string
 }

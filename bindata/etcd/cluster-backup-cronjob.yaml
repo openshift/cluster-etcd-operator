@@ -37,6 +37,11 @@ spec:
                   valueFrom:
                     fieldRef:
                       fieldPath: metadata.labels['batch.kubernetes.io/job-name']
+              resources:
+                requests:
+                  memory: 80Mi
+                  cpu: 10m
+          priorityClassName: system-cluster-critical
           serviceAccountName: etcd-backup-sa
           nodeSelector:
             node-role.kubernetes.io/control-plane: ""
