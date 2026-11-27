@@ -247,15 +247,25 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			"etcd/minimal-sm.yaml",
 			"etcd/prometheus-role.yaml",
 			"etcd/prometheus-rolebinding.yaml",
-			"etcd/backups-sa.yaml",
-			"etcd/backups-cr.yaml",
-			"etcd/backups-crb.yaml",
+			"etcd/backup-sa.yaml",
+			"etcd/backup-policy-sa.yaml",
+			"etcd/backup-policy-cr.yaml",
+			"etcd/backup-policy-crb.yaml",
 			"etcd/networkpolicy-allow.yaml",
 			"etcd/networkpolicy-default-deny.yaml",
 		},
 		(&resourceapply.ClientHolder{}).WithKubernetes(kubeClient).WithDynamicClient(dynamicClient),
 		operatorClient,
 		controllerContext.EventRecorder,
+	).WithConditionalResources(
+		// Deprecated resources. Always delete.
+		bindata.Asset,
+		[]string{
+			"etcd/deprecated/backups-cr.yaml",
+			"etcd/deprecated/backups-crb.yaml",
+		},
+		func() bool { return false },
+		func() bool { return true },
 	).WithIgnoreNotFoundOnCreate().AddKubeInformers(kubeInformersForNamespaces)
 
 	envVarController := etcdenvvar.NewEnvVarController(
