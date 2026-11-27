@@ -97,6 +97,7 @@ func NewClusterMemberRemovalController(
 		ResyncEvery(33*time.Minute). // make it slow since nodes are updated every few minutes
 		WithBareInformers(networkInformer.Informer(), infrastructureInformer.Informer()).
 		WithInformers(
+			operatorClient.Informer(),
 			masterNodeInformer,
 			masterMachineInformer,
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer(),
@@ -300,6 +301,38 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 	if membersEqual(liveVotingMembers, healthyLiveVotingMembers) && len(healthyLiveVotingMembers) <= desiredControlPlaneReplicasCount {
 		klog.V(2).Infof("skip scale down: all voting, non-bootstrap members are healthy and membership does not exceed the desired cluster size of %v", desiredControlPlaneReplicasCount)
 		return nil
+	}
+
+	revisionUpdated, err := c.isEtcdEndpointRevisionUpdated(ctx)
+	if errors.Is(err, ceohelpers.RevisionRolloutInProgressErr) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !revisionUpdated {
+		memberHealth, err := c.etcdClient.MemberHealth(ctx)
+		if err != nil {
+			return fmt.Errorf("could not get member health for endpoint revision recovery: %w", err)
+		}
+		// Unhealthy voter recovery cannot wait for a revision rollout that may
+		// depend on those same nodes becoming healthy.
+		var recoveryCandidates []*machinev1beta1.Machine
+		for _, member := range memberHealth.GetUnhealthyMembers() {
+			if member.IsLearner {
+				continue
+			}
+			ip, err := ceohelpers.MemberToNodeInternalIP(member)
+			if err != nil {
+				return fmt.Errorf("cannot get node internal ip for unhealthy member %v: %w", member, err)
+			}
+			machine := votingMemberMachinesPendingDeletionIndex[ip]
+			if slices.Contains(unhealthyVotingMemberMachinesPendingDeletion, machine) {
+				recoveryCandidates = append(recoveryCandidates, machine)
+			}
+		}
+		votingMembersMachinesPendingDeletion = recoveryCandidates
+		unhealthyVotingMemberMachinesPendingDeletion = nil
 	}
 
 	// remove the unhealthy machine pending deletion first
@@ -559,9 +592,7 @@ func machineFailureDomainCountByIndex(machines []*machinev1beta1.Machine) map[in
 	return count
 }
 
-// isEtcdEndpointsUpdated checks whether the live etcd membership matches the etcd-endpoints configmap.
-// This prevents removing multiple members in quick succession before the configmap is updated
-// and propagated through a revision rollout.
+// isEtcdEndpointsUpdated checks whether live voting membership matches the mutable endpoints.
 func (c *clusterMemberRemovalController) isEtcdEndpointsUpdated(ctx context.Context) (bool, error) {
 	liveVotingMemberIPs, err := ceohelpers.VotingMemberIPListSet(ctx, c.etcdClient)
 	if err != nil {
@@ -578,6 +609,41 @@ func (c *clusterMemberRemovalController) isEtcdEndpointsUpdated(ctx context.Cont
 	if !liveVotingMemberIPs.Equal(configMapMemberIPs) {
 		klog.V(2).Infof("skipping member removal: live etcd membership differs from etcd-endpoints configmap. Live members: %v, ConfigMap members: %v",
 			liveVotingMemberIPs.List(), configMapMemberIPs.List())
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// isEtcdEndpointRevisionUpdated compares live voting membership with the deployed
+// endpoint snapshot. A rollout returns RevisionRolloutInProgressErr to prevent recovery admission.
+func (c *clusterMemberRemovalController) isEtcdEndpointRevisionUpdated(ctx context.Context) (bool, error) {
+	liveVotingMemberIPs, err := ceohelpers.VotingMemberIPListSet(ctx, c.etcdClient)
+	if err != nil {
+		return false, fmt.Errorf("failed to get live voting member IPs: %w", err)
+	}
+
+	_, status, _, err := c.operatorClient.GetStaticPodOperatorState()
+	if err != nil {
+		return false, fmt.Errorf("failed to get static pod operator state: %w", err)
+	}
+	revision, err := ceohelpers.CurrentRevision(*status)
+	if errors.Is(err, ceohelpers.RevisionRolloutInProgressErr) {
+		return false, err
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to get current revision: %w", err)
+	}
+
+	// The mutable endpoints can catch up before the revision controller publishes
+	// a new revision. The deployed snapshot must also reflect the previous removal.
+	revisionedEndpointsName := fmt.Sprintf("etcd-endpoints-%d", revision)
+	revisionedEndpoints, err := c.configMapListerForTargetNamespace.Get(revisionedEndpointsName)
+	if err != nil {
+		return false, fmt.Errorf("failed to get %s configmap: %w", revisionedEndpointsName, err)
+	}
+	if !liveVotingMemberIPs.Equal(ceohelpers.MemberIPSetFromConfigMap(revisionedEndpoints)) {
+		klog.V(2).Infof("live etcd membership differs from %s configmap", revisionedEndpointsName)
 		return false, nil
 	}
 
