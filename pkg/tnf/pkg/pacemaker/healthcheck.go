@@ -41,6 +41,9 @@ const (
 
 	// Operator condition types
 	conditionTypePacemakerDegraded = "PacemakerHealthCheckDegraded"
+	// conditionTypePacemakerUpgradeable blocks minor-version upgrades (Status=False) while the
+	// pacemaker cluster is unhealthy, mirroring the Degraded condition with inverted polarity.
+	conditionTypePacemakerUpgradeable = "PacemakerHealthCheckUpgradeable"
 
 	// Event key prefixes
 	eventKeyPrefixWarning = "warning:"
@@ -57,7 +60,7 @@ const (
 	msgPacemakerDegraded        = "Pacemaker cluster is in degraded state"
 	msgPacemakerHealthy         = "Pacemaker cluster is healthy - all nodes have healthy critical resources"
 	msgPacemakerWarningsCleared = "Pacemaker cluster warnings cleared"
-	msgFencingRedundancyLost    = "fencing at risk (agent running but not managed for recovery)"
+	msgFencingDegraded          = "fencing at risk (agent running but not managed for recovery)"
 
 	// Event message templates
 	msgDetectedFencing  = "Pacemaker detected a recent fencing event: %s"
@@ -97,10 +100,14 @@ var errorPatternsByPriority = []struct {
 //   - Errors: Conditions requiring immediate action or causing downstream degradation.
 //     Examples: node offline, fencing unavailable, etcd/kubelet unhealthy, maintenance mode,
 //     alert agent missing/misconfigured in the CIB or its script missing on a node.
-//   - Warnings: Degraded redundancy where the cluster remains functional but should be investigated.
-//     Examples: FencingHealthy=False with FencingAvailable=True (can still fence, but redundancy lost).
+//   - Warnings: Degraded conditions where the cluster remains functional but should be investigated.
+//     Examples: FencingHealthy=False with FencingAvailable=True (can still fence, but the agent
+//     is not managed for recovery).
 //
 // The operator degrades on Errors but not Warnings. Warnings generate events for observability.
+// Upgrades are blocked on Errors only: per the OCPBUGS-85833 review clarification, fencing that
+// is available but not fully managed is not an upgrade blocker; only fencing being unavailable
+// (an Error) blocks.
 type HealthStatus struct {
 	OverallStatus HealthStatusValue
 	Warnings      []string
@@ -124,8 +131,28 @@ type HealthCheck struct {
 
 	// Previous health status for transition detection and grace period calculation.
 	// Only updated when status is non-Unknown, so CRLastUpdated reflects the last valid CR timestamp.
+	// unknownSince and upgradeBlockedSince are the in-memory grace/inertia baselines; all three
+	// are guarded by previousMu.
 	previousMu sync.Mutex
 	previous   *HealthStatus
+	// unknownSince anchors the Unknown grace period when there is no valid CR timestamp to
+	// measure from (CR missing / no status). It is set to the time of the first such Unknown
+	// observation in this process and reset to zero on any valid (non-Unknown) status. The
+	// stale-CR case does not use this field: it measures grace from the CR's own lastUpdated,
+	// which is what makes grace survive a restart in the common case.
+	unknownSince time.Time
+	// upgradeBlockedSince is when the current upgrade-block episode began, used to damp the
+	// Upgradeable condition (see UpgradeableBlockInertia). On restart it is seeded from the
+	// persisted PacemakerHealthCheckDegraded LastTransitionTime (see upgradeBlockStart), so a
+	// restart does not restart the inertia window. Reset to zero as soon as upgrades are allowed.
+	upgradeBlockedSince time.Time
+	// upgradeBlockApplied records that Upgradeable=False has been written for the current episode.
+	// It restores the unchanged-status fast path once the block is in place, while still bypassing
+	// the fast path while the write is pending or retrying.
+	upgradeBlockApplied bool
+	// upgradeBlockInertia is how long an upgrade-block trigger must persist before Upgradeable
+	// is flipped to False. Defaults to UpgradeableBlockInertia; overridable in tests.
+	upgradeBlockInertia time.Duration
 
 	disruptionTracker *DisruptionTracker
 
@@ -227,6 +254,7 @@ func NewHealthCheckWithInformer(
 		pacemakerInformer:       pacemakerInformer,
 		recordedEvents:          make(map[string]time.Time),
 		disruptionTracker:       NewDisruptionTracker(),
+		upgradeBlockInertia:     UpgradeableBlockInertia,
 		// previous starts as nil - first sync will be treated as "from Unknown"
 	}
 
@@ -287,6 +315,8 @@ func (c *HealthCheck) sync(ctx context.Context, syncCtx factory.SyncContext) err
 	if currentStatus.OverallStatus != StatusUnknown {
 		c.previousMu.Lock()
 		c.previous = currentStatus
+		// A valid observation resets the Unknown grace baseline.
+		c.unknownSince = time.Time{}
 		c.previousMu.Unlock()
 	}
 	return nil
@@ -302,6 +332,9 @@ func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, *H
 
 	c.previousMu.Lock()
 	previous := c.previous
+	// Bypass only while the block still has to be written. Once Upgradeable=False is persisted for
+	// this episode an unchanged status needs no re-evaluation, so the fast path is restored.
+	blockPending := !c.upgradeBlockedSince.IsZero() && !c.upgradeBlockApplied
 	c.previousMu.Unlock()
 
 	item, exists, err := c.pacemakerInformer.GetStore().GetByKey(PacemakerClusterResourceName)
@@ -322,7 +355,12 @@ func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, *H
 	isStale := pacemakerCR.Status.LastUpdated.IsZero() ||
 		time.Since(pacemakerCR.Status.LastUpdated.Time) > StatusStalenessThreshold
 
-	if !isStale && previous != nil && !previous.CRLastUpdated.IsZero() &&
+	// A pending upgrade block has a wall-clock deadline (UpgradeableBlockInertia) that must be
+	// re-evaluated on the controller's periodic resync, independent of whether the collector
+	// advanced lastUpdated. Otherwise the block is only applied at the next CR update or once the
+	// status goes stale, not when the inertia deadline actually elapses. Only a still-pending block
+	// bypasses the optimization; once Upgradeable=False is written the fast path is restored.
+	if !isStale && !blockPending && previous != nil && !previous.CRLastUpdated.IsZero() &&
 		pacemakerCR.Status.LastUpdated.Time.Equal(previous.CRLastUpdated) {
 		klog.V(4).Infof("Skipping sync: lastUpdated timestamp unchanged (%v)", pacemakerCR.Status.LastUpdated.Time)
 		return nil, nil, nil
@@ -449,7 +487,8 @@ func checkNodeStatuses(cr *pacmkrv1.PacemakerCluster, status *HealthStatus, aler
 
 // checkNodeConditions checks the conditions of a single node and its resources,
 // routing issues to errors or warnings based on severity.
-// Errors degrade the operator; warnings are informational (e.g., fencing redundancy lost).
+// Errors degrade the operator; warnings are informational (e.g., fencing available but not
+// fully managed).
 func checkNodeConditions(node pacmkrv1.PacemakerClusterNodeStatus, status *HealthStatus, alertAgentStatusEnabled bool) {
 	conditions := node.Conditions
 	if len(conditions) == 0 {
@@ -480,19 +519,27 @@ func checkNodeConditions(node pacmkrv1.PacemakerClusterNodeStatus, status *Healt
 	}
 }
 
-// getFencingWarnings returns warnings about degraded fencing redundancy.
-// This is checked independently of overall node health because fencing redundancy
-// degradation should be reported even when the node is otherwise healthy.
-func getFencingWarnings(conditions []metav1.Condition) []string {
-	var warnings []string
-
+// isFencingDegraded reports whether fencing is still available on the node but not fully
+// healthy: the node can still be fenced, but at least one agent is not managed for recovery.
+// This is reported as a Warning for observability only; it must not block upgrades (per the
+// OCPBUGS-85833 review clarification, only fencing being unavailable blocks). Fencing being
+// unavailable is a separate, more severe case handled as an Error via nodeConditionChecks.
+func isFencingDegraded(conditions []metav1.Condition) bool {
 	fencingAvailableCondition := FindCondition(conditions, pacmkrv1.NodeFencingAvailableConditionType)
 	fencingHealthyCondition := FindCondition(conditions, pacmkrv1.NodeFencingHealthyConditionType)
 
-	if fencingHealthyCondition != nil && fencingHealthyCondition.Status != metav1.ConditionTrue {
-		if fencingAvailableCondition != nil && fencingAvailableCondition.Status == metav1.ConditionTrue {
-			warnings = append(warnings, msgFencingRedundancyLost)
-		}
+	return fencingHealthyCondition != nil && fencingHealthyCondition.Status != metav1.ConditionTrue &&
+		fencingAvailableCondition != nil && fencingAvailableCondition.Status == metav1.ConditionTrue
+}
+
+// getFencingWarnings returns warnings about degraded fencing.
+// This is checked independently of overall node health because fencing degradation
+// should be reported even when the node is otherwise healthy.
+func getFencingWarnings(conditions []metav1.Condition) []string {
+	var warnings []string
+
+	if isFencingDegraded(conditions) {
+		warnings = append(warnings, msgFencingDegraded)
 	}
 
 	return warnings
@@ -608,6 +655,25 @@ func getResourceIssue(conditions []metav1.Condition) string {
 	return "is unhealthy"
 }
 
+// healthDecision is the desired operator state derived from a HealthStatus. The
+// Degraded and Upgradeable decisions are computed together but applied separately:
+// only Errors block upgrades and degrade; Warnings never do either.
+type healthDecision struct {
+	// determinable is false while within the Unknown grace period; both conditions are
+	// then left untouched.
+	determinable bool
+	// degraded is the desired PacemakerHealthCheckDegraded state.
+	degraded bool
+	// blockUpgrade is true when upgrades must be blocked (Upgradeable=False).
+	blockUpgrade bool
+	// upgradeDamped is true when the blockUpgrade trigger has already waited out a grace
+	// period (prolonged Unknown), so the Upgradeable inertia must not be applied again.
+	upgradeDamped bool
+	// upgradeReason/upgradeMessage describe why upgrades are blocked.
+	upgradeReason  string
+	upgradeMessage string
+}
+
 // updateOperatorStatus processes the HealthStatus and conditionally updates the operator state.
 // previous is the last non-Unknown health status (used for grace period calculation).
 func (c *HealthCheck) updateOperatorStatus(ctx context.Context, status *HealthStatus, previous *HealthStatus) error {
@@ -621,45 +687,202 @@ func (c *HealthCheck) updateOperatorStatus(ctx context.Context, status *HealthSt
 		klog.Errorf(msgPacemakerError, err)
 	}
 
-	// Update operator conditions based on pacemaker status
-	switch status.OverallStatus {
-	case StatusError:
-		return c.setPacemakerDegradedCondition(ctx, status)
-	case StatusHealthy, StatusWarning:
-		// Both healthy and warning states should clear degraded condition
-		// Warnings are informational (e.g. recent fencing, node count mismatch) and don't indicate degradation
-		if status.OverallStatus == StatusWarning {
-			klog.V(2).Infof("Pacemaker health check has warnings but cluster is operational: %v", status.Warnings)
-		}
-		return c.clearPacemakerDegradedCondition(ctx, status)
-	case StatusUnknown:
-		// Unknown status means we cannot determine pacemaker health (CR not found, stale, no status, etc.)
-		// Only mark as degraded if we haven't received a valid status in a while (grace period).
-		// Use previous.CRLastUpdated which reflects when we last had valid cluster data.
-		// If previous is nil (first sync), don't degrade immediately.
-		if previous == nil || previous.CRLastUpdated.IsZero() {
-			klog.V(2).Infof("Pacemaker health check cannot determine status (no previous valid status), not marking degraded yet: %v",
-				status.Errors)
-			return nil
-		}
-
-		timeSinceLastValid := time.Since(previous.CRLastUpdated)
-		if timeSinceLastValid > StatusUnknownDegradedThreshold {
-			klog.Warningf("Pacemaker health check cannot determine status for %v (threshold: %v), marking as degraded: %v",
-				timeSinceLastValid, StatusUnknownDegradedThreshold, status.Errors)
-			return c.setPacemakerDegradedCondition(ctx, status)
-		}
-
-		// Still within grace period, just log
-		klog.V(2).Infof("Pacemaker health check cannot determine status for %v (threshold: %v), not marking degraded yet: %v",
-			timeSinceLastValid, StatusUnknownDegradedThreshold, status.Errors)
-		return nil
-	default:
-		// This should never happen, but log it if it does
-		klog.Errorf("Unexpected pacemaker health status: %s (errors: %v, warnings: %v)",
-			status.OverallStatus, status.Errors, status.Warnings)
+	d := c.evaluateHealth(status, previous)
+	if !d.determinable {
+		// Still within the Unknown grace period; leave both conditions untouched.
+		klog.V(2).Infof("Pacemaker health check cannot determine status, within grace period, leaving conditions untouched: %v",
+			status.Errors)
 		return nil
 	}
+
+	// Apply the Upgradeable decision (damped) first, then the Degraded decision, matching the
+	// previous call order: a failure updating Upgradeable returns before Degraded is touched.
+	if err := c.reconcileUpgradeable(ctx, d); err != nil {
+		return err
+	}
+
+	if d.degraded {
+		return c.setPacemakerDegradedCondition(ctx, status)
+	}
+	if status.OverallStatus == StatusWarning {
+		klog.V(2).Infof("Pacemaker health check has warnings but cluster is operational: %v", status.Warnings)
+	}
+	return c.clearPacemakerDegradedCondition(ctx, status)
+}
+
+// evaluateHealth derives the desired Degraded/Upgradeable state from the current status.
+func (c *HealthCheck) evaluateHealth(status *HealthStatus, previous *HealthStatus) healthDecision {
+	errMessage := strings.Join(status.Errors, "; ")
+	if errMessage == "" {
+		errMessage = msgPacemakerDegraded
+	}
+
+	switch status.OverallStatus {
+	case StatusError:
+		// Error degrades the operator and blocks upgrades: CVO must not roll a new version
+		// onto a cluster whose pacemaker fencing/membership is broken.
+		return healthDecision{
+			determinable:   true,
+			degraded:       true,
+			blockUpgrade:   true,
+			upgradeReason:  reasonPacemakerUnhealthy,
+			upgradeMessage: errMessage,
+		}
+	case StatusHealthy, StatusWarning:
+		// Healthy/Warning never degrade the operator and never block upgrades. Fencing that is
+		// available but not fully managed is only a Warning: per the OCPBUGS-85833 review
+		// clarification, upgrades are blocked on fencing being unavailable (an Error) only,
+		// not on degraded fencing.
+		return healthDecision{determinable: true, degraded: false}
+	case StatusUnknown:
+		// Unknown means we cannot determine pacemaker health (CR missing, stale, no status, etc.).
+		// Only act once we have been unable to confirm health for longer than the grace period.
+		baseline := c.unknownGraceBaseline(status, previous)
+		timeSinceLastValid := time.Since(baseline)
+		if timeSinceLastValid > StatusUnknownDegradedThreshold {
+			klog.Warningf("Pacemaker health check cannot determine status for %v (threshold: %v), marking degraded and blocking upgrades: %v",
+				timeSinceLastValid, StatusUnknownDegradedThreshold, status.Errors)
+			// Prolonged Unknown degrades the operator and blocks upgrades for the same reason we
+			// block on Error. The grace period already damped this, so skip the Upgradeable inertia.
+			return healthDecision{
+				determinable:   true,
+				degraded:       true,
+				blockUpgrade:   true,
+				upgradeDamped:  true,
+				upgradeReason:  reasonPacemakerUnhealthy,
+				upgradeMessage: errMessage,
+			}
+		}
+		klog.V(2).Infof("Pacemaker health check cannot determine status for %v (threshold: %v), within grace period: %v",
+			timeSinceLastValid, StatusUnknownDegradedThreshold, status.Errors)
+		return healthDecision{determinable: false}
+	default:
+		// This should never happen, but log it if it does.
+		klog.Errorf("Unexpected pacemaker health status: %s (errors: %v, warnings: %v)",
+			status.OverallStatus, status.Errors, status.Warnings)
+		return healthDecision{determinable: false}
+	}
+}
+
+// unknownGraceBaseline returns the reference time for the Unknown-status grace period.
+//
+// It prefers the most recent known-valid CR timestamp: the previous observation, then the
+// current CR's own lastUpdated (which a stale CR still carries). This is what makes the grace
+// period survive a controller restart when the CR exists but is stale — the common case behind
+// the original "Upgradeable=True stuck forever" bug.
+//
+// When no CR timestamp is available at all (CR missing or status never populated), grace starts
+// at the first Unknown observation in this process (in-memory unknownSince), reset on any valid
+// status. It is deliberately NOT seeded from the persisted Upgradeable condition's
+// LastTransitionTime: for a long-healthy cluster that timestamp records when Upgradeable became
+// True, not when health became unknown, so seeding from it would skip the grace period and block
+// on the first sync after a restart. The trade-off is that a controller crash-looping faster than
+// the grace period with a persistently missing CR would keep restarting the clock; that is far
+// rarer and less harmful than falsely blocking upgrades on every restart.
+func (c *HealthCheck) unknownGraceBaseline(status *HealthStatus, previous *HealthStatus) time.Time {
+	if previous != nil && !previous.CRLastUpdated.IsZero() {
+		return previous.CRLastUpdated
+	}
+	// After a restart `previous` is nil, but a stale CR still reports when it was last updated,
+	// which is exactly "when data was last valid".
+	if status != nil && !status.CRLastUpdated.IsZero() {
+		return status.CRLastUpdated
+	}
+
+	c.previousMu.Lock()
+	defer c.previousMu.Unlock()
+	if c.unknownSince.IsZero() {
+		c.unknownSince = time.Now()
+	}
+	return c.unknownSince
+}
+
+// reconcileUpgradeable applies the Upgradeable decision with inertia. Upgrades are allowed
+// immediately on recovery, but blocking is delayed until the trigger has persisted for
+// upgradeBlockInertia so a single transient Error sync (e.g. a brief NodeOnline=False) does
+// not flap the ClusterOperator Upgradeable condition. library-go applies no inertia to the
+// Upgradeable union, so the damping must live here.
+func (c *HealthCheck) reconcileUpgradeable(ctx context.Context, d healthDecision) error {
+	if !d.blockUpgrade {
+		// Recovery: allow upgrades immediately and reset the damping clock.
+		c.previousMu.Lock()
+		c.upgradeBlockedSince = time.Time{}
+		c.upgradeBlockApplied = false
+		c.previousMu.Unlock()
+		return c.setPacemakerUpgradeableCondition(ctx, true, "AsExpected", "")
+	}
+
+	// A trigger that already waited out a grace period (prolonged Unknown) is not damped again.
+	if !d.upgradeDamped {
+		inertia := c.upgradeBlockInertia
+		if inertia == 0 {
+			inertia = UpgradeableBlockInertia
+		}
+		start, err := c.upgradeBlockStart()
+		if err != nil {
+			return err
+		}
+		elapsed := time.Since(start)
+		if elapsed < inertia {
+			klog.V(2).Infof("Pacemaker upgrade block pending inertia (%v/%v), leaving Upgradeable untouched: %s",
+				elapsed, inertia, d.upgradeMessage)
+			return nil
+		}
+	}
+
+	if err := c.setPacemakerUpgradeableCondition(ctx, false, d.upgradeReason, d.upgradeMessage); err != nil {
+		return err
+	}
+
+	// The block is now persisted for this episode; the unchanged-status fast path may resume.
+	c.previousMu.Lock()
+	c.upgradeBlockApplied = true
+	c.previousMu.Unlock()
+	return nil
+}
+
+// upgradeBlockStart returns the time the current upgrade-block episode began.
+//
+// The in-memory upgradeBlockedSince is the fast path, but it does not survive a controller
+// restart: a new process observing an already-known, ongoing error would otherwise start a fresh
+// UpgradeableBlockInertia window, postponing the block by a full window on every restart (about
+// two windows across a single restart, unbounded under repeated restarts). The episode start is
+// therefore persisted as the PacemakerHealthCheckDegraded condition's LastTransitionTime, which
+// library-go stamps on every status transition and which survives restarts. blockUpgrade implies
+// degraded, so that timestamp is populated for every trigger by the time a restart can observe it.
+//
+// A failure to read the persisted condition is returned without caching anything: the persisted
+// timestamp is the only record of the original deadline, so anchoring the window at the failure
+// time would lose that deadline for the rest of the episode. The next sync retries the read.
+func (c *HealthCheck) upgradeBlockStart() (time.Time, error) {
+	c.previousMu.Lock()
+	if !c.upgradeBlockedSince.IsZero() {
+		start := c.upgradeBlockedSince
+		c.previousMu.Unlock()
+		return start, nil
+	}
+	c.previousMu.Unlock()
+
+	cond, err := c.getCurrentPacemakerCondition(conditionTypePacemakerDegraded)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to read persisted pacemaker degraded condition: %w", err)
+	}
+
+	var start time.Time
+	if cond != nil && cond.Status == operatorv1.ConditionTrue && !cond.LastTransitionTime.IsZero() {
+		start = cond.LastTransitionTime.Time
+	}
+	if start.IsZero() {
+		start = time.Now()
+	}
+
+	c.previousMu.Lock()
+	if c.upgradeBlockedSince.IsZero() {
+		c.upgradeBlockedSince = start
+	}
+	start = c.upgradeBlockedSince
+	c.previousMu.Unlock()
+	return start, nil
 }
 
 func (c *HealthCheck) setPacemakerDegradedCondition(ctx context.Context, status *HealthStatus) error {
@@ -669,7 +892,7 @@ func (c *HealthCheck) setPacemakerDegradedCondition(ctx context.Context, status 
 	}
 
 	// Check if the condition is already set with the same message
-	currentCondition, err := c.getCurrentPacemakerCondition()
+	currentCondition, err := c.getCurrentPacemakerCondition(conditionTypePacemakerDegraded)
 	if err != nil {
 		return err
 	}
@@ -694,7 +917,7 @@ func (c *HealthCheck) setPacemakerDegradedCondition(ctx context.Context, status 
 
 func (c *HealthCheck) clearPacemakerDegradedCondition(ctx context.Context, status *HealthStatus) error {
 	// Check the current condition state
-	currentCondition, err := c.getCurrentPacemakerCondition()
+	currentCondition, err := c.getCurrentPacemakerCondition(conditionTypePacemakerDegraded)
 	if err != nil {
 		return err
 	}
@@ -726,16 +949,59 @@ func (c *HealthCheck) clearPacemakerDegradedCondition(ctx context.Context, statu
 	return nil
 }
 
-// getCurrentPacemakerCondition retrieves the current PacemakerHealthCheckDegraded condition
-func (c *HealthCheck) getCurrentPacemakerCondition() (*operatorv1.OperatorCondition, error) {
+// setPacemakerUpgradeableCondition sets the PacemakerHealthCheckUpgradeable operator condition.
+//
+// This mirrors setPacemakerDegradedCondition with inverted polarity:
+//   - upgradeable=true  -> Status=True  (reason "AsExpected"): upgrades allowed
+//   - upgradeable=false -> Status=False (reason/message supplied by the caller): the
+//     cluster-version-operator blocks minor-version upgrades.
+//
+// The caller supplies the reason and message (reasonPacemakerUnhealthy for errors and prolonged
+// unknowns). The update is idempotent: it is skipped when the existing condition already has the
+// same Status and Message.
+func (c *HealthCheck) setPacemakerUpgradeableCondition(ctx context.Context, upgradeable bool, reason, message string) error {
+	condition := operatorv1.OperatorCondition{
+		Type:   conditionTypePacemakerUpgradeable,
+		Status: operatorv1.ConditionTrue,
+		// "AsExpected" matches the library-go convention for the healthy/good state and the
+		// value the ClusterOperator Upgradeable union produces when nothing is blocking.
+		Reason: reason,
+	}
+	if !upgradeable {
+		if message == "" {
+			message = msgPacemakerDegraded
+		}
+		condition.Status = operatorv1.ConditionFalse
+		condition.Reason = reason
+		condition.Message = message
+	}
+
+	// Skip the update if the condition already matches (idempotent, same as the degraded path).
+	currentCondition, err := c.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+	if err != nil {
+		return err
+	}
+	if currentCondition != nil &&
+		currentCondition.Status == condition.Status &&
+		currentCondition.Message == condition.Message {
+		klog.V(4).Infof("Pacemaker upgradeable condition already set to %s with same message, skipping update", condition.Status)
+		return nil
+	}
+
+	return c.updateOperatorCondition(ctx, condition)
+}
+
+// getCurrentPacemakerCondition retrieves the current operator condition of the given type,
+// or (nil, nil) if no such condition is present.
+func (c *HealthCheck) getCurrentPacemakerCondition(conditionType string) (*operatorv1.OperatorCondition, error) {
 	_, currentStatus, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current operator status: %w", err)
 	}
 
-	// Find the current pacemaker degraded condition
+	// Find the requested pacemaker condition
 	for i := range currentStatus.Conditions {
-		if currentStatus.Conditions[i].Type == conditionTypePacemakerDegraded {
+		if currentStatus.Conditions[i].Type == conditionType {
 			return &currentStatus.Conditions[i], nil
 		}
 	}

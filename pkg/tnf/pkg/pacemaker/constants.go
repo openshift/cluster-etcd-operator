@@ -42,6 +42,20 @@ const (
 	// Matches StatusStalenessThreshold to provide consistent grace period behavior.
 	StatusUnknownDegradedThreshold = 5 * time.Minute
 
+	// UpgradeableBlockInertia is how long a transient Error must persist before the
+	// PacemakerHealthCheckUpgradeable condition is flipped to False. Recovery clears the
+	// block immediately. library-go applies no inertia to the ClusterOperator Upgradeable
+	// union (status_controller passes nil), so the damping that keeps a brief
+	// NodeOnline=False blip from flapping upgrades must live in this controller. The value
+	// matches the Degraded inertia this operator already configures: pkg/operator/starter.go
+	// raises every condition matching .*Degraded$ to 10 minutes (library-go's default is 2)
+	// because node conditions flap while machines and kubelets restart during upgrades.
+	// Keeping the two equal means Upgradeable turns False at the same time as Degraded, on
+	// the same basis (the Degraded condition's LastTransitionTime) that library-go uses for
+	// the Degraded union. The prolonged-Unknown path is exempt: its grace period
+	// (StatusUnknownDegradedThreshold) already provides the anti-flap damping.
+	UpgradeableBlockInertia = 10 * time.Minute
+
 	// EventDeduplicationWindowFencing is the window for fencing event deduplication
 	EventDeduplicationWindowFencing = 24 * time.Hour
 
