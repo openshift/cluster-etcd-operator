@@ -323,7 +323,11 @@ This runs on the restore node before anything destructive.
    the disable script stops etcd as today, and also moves the kube-apiserver manifest
    into the stopped-manifests directory next to etcd's and waits for its containers to
    stop. `cluster-restore.sh` does the same on the restore node. From here until phase 4
-   the API is down everywhere, as it is today during a restore.
+   the API is down everywhere, as it is today during a restore. Most of the time spent
+   here is kube-apiserver's graceful termination (160s): in the validation run, fencing
+   took 2m45s of a 6m40s API outage. Since no request should be served anymore at this
+   point, the scripts can stop the containers with a short `crictl stop --timeout`
+   instead of waiting for the full graceful termination.
 2. **Restart oauth-apiserver.** Once no kube-apiserver runs anywhere, the disable script
    (and `cluster-restore.sh` on the restore node) stops the oauth-apiserver containers on
    its node with `crictl stop`. Kubelet restarts them right away, which is the point: see
@@ -386,10 +390,28 @@ On the restore node, once etcd runs from the snapshot:
    so the deployer sees what actually runs. The mirror pod still carries the running
    revision's label, so that's the name the deployer looks up. If the secret already
    exists, the running revision is the backup revision, and the content is identical, so
-   nothing has to be done. In the `identity`-only case this step is skipped.
-4. **Force a redeployment** of kube-apiserver (and the other components, as the restore
-   procedure already does). The operator builds the new revision from the key secrets
-   in the restored etcd, which are the backup-time keys, and rolls it out to all nodes.
+   nothing has to be done. In the `identity`-only case this step is skipped. The restored
+   etcd already contains the backup config as `encryption-config-<backup-revision>`, so
+   this step can simply copy that secret to the new name.
+4. **Force a redeployment** of etcd, kube-apiserver, kube-controller-manager and
+   kube-scheduler, as the restore procedure already does. The kube-apiserver operator
+   builds the new revision from the key secrets in the restored etcd, which are the
+   backup-time keys, and rolls it out to all nodes. Two gates delay this, and both exist
+   in today's restore too:
+   * The etcd operator doesn't create a new revision while only one member is healthy
+     (`RevisionControllerDegraded: CheckSafeToScaleCluster found 1 healthy member(s) out
+     of the 3 required by the HAScalingStrategy`). The procedure has to set
+     `useUnsupportedUnsafeNonHANonProductionUnstableEtcd` for the duration of the
+     restore, as the disaster recovery tests in openshift/origin (`test/extended/dr`) do,
+     and remove it once etcd has all members again.
+   * The kube-apiserver operator doesn't render a new configuration while etcd has fewer
+     than two live endpoints (`apiServerArguments.etcd-servers has less than two live
+     etcd endpoints`).
+
+   So the single kube-apiserver runs from the copy until etcd has scaled up again, which
+   took about 25 minutes in the validation run. The copy has to stay in place for that
+   long. The installer then picked the fenced nodes first, one at a time, and the restore
+   node last.
 5. **Rotation continues normally.** With an old backup, the key controller creates the
    next key, the state controller rolls it out as a read key and then as the write key,
    and storage migration rewrites everything.
@@ -438,7 +460,9 @@ involved, because it only runs on single-node clusters.
 
 ### openshift-apiserver and oauth-apiserver after the restore
 
-Once the single kube-apiserver can decrypt their config secrets, kubelet replaces their
+In the validation run, both operators rolled out new pods shortly after the restore, and
+the Endpoints only pointed at those. In general, once the single kube-apiserver can decrypt their config
+secrets, kubelet replaces their
 running pods with the restored ones. The running pods aren't in the restored etcd as
 long as an encryption config change rolls out new pods, which the validation checks. Those mount the backup-time config, which
 matches their restored data. Their post-backup keys are thrown away, like
@@ -566,25 +590,49 @@ by name.
 
 ## Validation
 
-The questions that code can't answer are covered by an end-to-end test on a three-node
-cluster with aescbc encryption: take a backup, force two key rotations, then restore with
-the procedure above. The test checks:
+The procedure was run by hand on a three-node OpenShift 5.1 nightly cluster (control-plane
+nodes that are also workers), emulating the subcommands with shell scripts. The setup:
 
-* **The failures are gone:** every secret, configmap, route and OAuth token in the
-  restored data can be read, the redeployment finishes on all nodes, and the following
-  rotation and storage migration complete.
-* **Kubelet and the fenced nodes:** kubelet removes the mirror pods restored from etcd for
-  nodes that have no kube-apiserver manifest, and reports the restore node's mirror pod
-  with the running revision's label, so the installer controller picks the nodes as
-  described.
-* **Nothing writes with a post-backup key:** after the restore, no value in etcd carries
-  the prefix of a post-backup key, for kube-apiserver, openshift-apiserver and
-  oauth-apiserver. This covers the oauth-apiserver restart and the endpoint routing.
-* **New pods on key changes:** an encryption config change for openshift-apiserver and
-  oauth-apiserver rolls out new pods, so pods holding post-backup keys never exist in the
-  restored etcd.
-* **Leftovers:** no revision directory on any node contains post-backup keys after the
-  cleanup.
+1. Enable aescbc encryption and wait until all three components report
+   `EncryptionCompleted` with key 1.
+2. Take a backup with `cluster-backup.sh` on the restore node, at kube-apiserver revision 8.
+   The backup config in the tarball holds key 1 only.
+3. Create a namespace, secret, configmap and route after the backup.
+4. Force two key rotations for all three components (`unsupportedConfigOverrides`
+   `encryption.reason` for kube-apiserver and openshift-apiserver,
+   `oauthAPIServer.encryption.reason` for authentication). Afterwards every running
+   config is `[3, 2, identity]` at revision 13: key 1 is gone everywhere, so a restore
+   without the rollback runs into failures 1 and 2.
+
+Then phases 3 and 4 as described. The node side ran from a privileged pod on the restore
+node that reached the other control-plane nodes over ssh, using the same key setup as the
+disaster recovery tests in openshift/origin. The pod was created after the backup, so
+kubelet deletes it as soon as kube-apiserver serves the restored data. All node-side
+steps therefore run as a host process started from the pod, and the steps that need the
+API ran from outside the cluster.
+
+Results:
+
+| Check | Result |
+|-------|--------|
+| Restored data readable through the single kube-apiserver | Yes: all secrets, configmaps and routes could be listed without errors. The objects created after the backup are gone, as expected. |
+| Values written with a post-backup key | None. After the restore and the full redeployment, every secret, configmap, route and OAuth access token value in etcd carries the `k8s:enc:aescbc:v1:1:` prefix. That includes an OAuth access token created after the restore. |
+| Key IDs reused with different material | None. Each component kept only key 1, and the desired configs were `[1, identity]`. The backup was less than a day old, so no time-based rotation was due; with an older backup the next key is created right away, which is harmless after the rollback. |
+| Mirror pods of the fenced nodes | Kubelet removed the ones restored from etcd. Until the redeployment, only the restore node's mirror pod existed, labeled with the running revision. |
+| Fenced nodes coming back | The installer brought kube-apiserver back on both fenced nodes first, one at a time, as described in [Revision numbers after the restore](#revision-numbers-after-the-restore). |
+| Restore node switching from the copy to a new revision | Clean. The `setup` container got the lock immediately (`flock: getting lock took 0.000006 seconds`), with no entries in `lock.log`, and the new revision runs from a fresh `kube-apiserver-pod-<revision>` directory. |
+| openshift-apiserver and oauth-apiserver | Both rolled out new pods after the restore. The Endpoints only pointed at the new pods. |
+| API outage | 6m40s, of which 2m45s was waiting for kube-apiserver's graceful termination during the fencing. |
+
+Not covered by this run:
+
+* The oauth-apiserver restart in phase 3 had nothing to drop, because no OAuth tokens
+  existed before the restore. A test needs tokens with an inactivity timeout that are in
+  use right before the fencing.
+* The rotation after the restore, because no rotation was due.
+* The certificate topics in [Certificates](#certificates), because no certificate
+  rotated or expired between backup and restore.
+* The `identity`-only case (encryption enabled after the backup).
 
 ## Alternatives
 
