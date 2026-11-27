@@ -11,7 +11,8 @@ The lifecycle manager ([pkg/tnf/operator/lifecycle_manager.go](../../pkg/tnf/ope
 1. **Job Controller Startup** - Starts job controllers when conditions are met (bootstrap or runtime mode)
 2. **Node Selection** - Provides `schedulableNodesFunc` for job controllers (intersection logic)
 3. **Status Collection** - Runs CronJob to collect Pacemaker status and populate PacemakerCluster CR
-4. **Bootstrap Detection** - Responds to node Ready transitions during initial cluster setup
+4. **Informer Events** - Enqueues lifecycle work when observed resources change
+5. **Membership Reconciliation** - Records Kubernetes node identities and serializes update-setup attempts; see [reconciliation.md](reconciliation.md)
 
 ## Startup Sequence
 
@@ -44,7 +45,7 @@ The lifecycle manager ([pkg/tnf/operator/lifecycle_manager.go](../../pkg/tnf/ope
         │ - Creates REST client          │
         │ - Creates PacemakerCluster     │
         │   informer (resync: 1min)      │
-        │ - Registers node event handlers│
+        │ - Enqueues informer events     │
         └────────────────────────────────┘
                          │
                          ▼
@@ -94,21 +95,27 @@ startJobControllers()
         │  ├─ Start: auth jobs (per-node)
         │  ├─ Start: setup job (cluster-wide, one-time)
         │  ├─ Start: fencing job (cluster-wide)
-        │  └─ Wait for setup job completion → mark transition complete
+        │  └─ Start after-setup jobs; setup runner marks transition
         │
         └─ YES (Runtime Mode):
            │
            ├─ Ensure auth/after-setup controllers running (per-node)
            ├─ Ensure setup job controller running (maintains conditions)
-           ├─ Ensure update-setup controller running (if 2 nodes)
            ├─ Ensure fencing controller running (cluster-wide)
            ├─ Start status collector CronJob
            └─ Start Pacemaker health check controller
 ```
 
-See [Job Controllers](job-controllers.md) for details on job execution patterns and retry logic.
+After controller startup, sync cleans orphaned Jobs/Pods and reconciles recorded
+update-setup work. See [reconciliation.md](reconciliation.md) for membership,
+attempts, and cleanup, and [Job Controllers](job-controllers.md) for the shared
+framework.
 
 ## Node Selection Logic
+
+This selects execution targets. Desired membership includes every registered
+control-plane Node, including NotReady nodes; see
+[reconciliation.md](reconciliation.md#desired-state-and-records).
 
 ### getActivePacemakerNodes()
 
@@ -311,52 +318,11 @@ Sync 6: Job succeeded → Stay on master-1
 
 See [pkg/tnf/operator/status_collector.go](../../pkg/tnf/operator/status_collector.go) for implementation.
 
-## Node Event Handlers
+## Node Events
 
-The lifecycle manager registers an `UpdateFunc` event handler on the node informer to trigger update-setup job restarts:
-
-### UpdateFunc (Node Ready Transition)
-
-```text
-Node updated
-        │
-        ▼
-Not Ready → Ready transition?
-        │
-    ┌───┴───┐
-    No      Yes
-    │       │
-    ▼       ▼
- Ignore  Trigger: restartUpdateSetupJob()
-            │
-            ▼
-         (Goroutine spawned)
-            │
-            ▼
-         Check transition complete?
-            │
-        ┌───┴───┐
-        No      Yes (post-transition only)
-        │       │
-        ▼       ▼
-     Skip    Check 2 ready nodes?
-                │
-            ┌───┴───┐
-            No      Yes
-            │       │
-            ▼       ▼
-         Skip    Restart update-setup job
-```
-
-**Why Goroutine?**
-- Event handlers must return quickly
-- Job restart involves blocking cleanup (delete, wait for deletion)
-- Prevents blocking the informer event loop
-
-**Use Case:**
-- Node becomes ready after replacement → update-setup job is restarted to handle node replacement operations
-- Without this event handler, update-setup would remain in Complete state even if it finished before auth ran on the new node
-- The restart ensures update-setup reruns its validation (expects exactly 2 online nodes in Pacemaker)
+Node Add/Update/Delete events enqueue the lifecycle controller's single worker.
+They do not start reconciliation goroutines or restart Jobs directly. Readiness
+changes refresh executor placement; name/UID/IP changes record new desired input.
 
 ## Integration with Job Controllers
 
@@ -369,19 +335,19 @@ schedulableNodesFunc := func() ([]*corev1.Node, error) {
 ```
 
 This function is passed to:
-- `RunClusterJobController()` for setup, update-setup, and fencing jobs
+- `RunClusterJobController()` for setup and fencing jobs
 - Status collector CronJob for node pinning
 
 Job controllers call this function to:
 1. Determine which nodes to target for round-robin retry
-2. Detect node list changes (triggers retry state reset)
+2. Refresh placement when eligible executors change, without invalidating running/completed work
 3. Ensure jobs only run on valid Pacemaker members
 
 See [Job Controllers - Multi-Node Job Pattern](job-controllers.md#multi-node-job-pattern) for how `schedulableNodesFunc` integrates with retry logic.
 
 ## Related Files
 
-- **[pkg/tnf/operator/lifecycle_manager.go](../../pkg/tnf/operator/lifecycle_manager.go)** - PacemakerLifecycleManager controller, sync loop, node event handlers
+- **[pkg/tnf/operator/lifecycle_manager.go](../../pkg/tnf/operator/lifecycle_manager.go)** - PacemakerLifecycleManager controller, sync loop, informer work queue
 - **[pkg/tnf/operator/helpers.go](../../pkg/tnf/operator/helpers.go)** - getActivePacemakerNodes(), intersection logic, staleness checking, node sorting
 - **[pkg/tnf/operator/status_collector.go](../../pkg/tnf/operator/status_collector.go)** - Status collector CronJob, node rotation logic
 - **[pkg/tnf/operator/job_controllers.go](../../pkg/tnf/operator/job_controllers.go)** - startJobControllers(), bootstrap vs runtime mode
