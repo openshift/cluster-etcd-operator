@@ -929,37 +929,13 @@ func ensureHostPathPVC(t testing.TB, pvcName string) {
 	require.NoError(t, err)
 	require.NotEmpty(t, nodes.Items, "a control-plane node is required for the backup volume")
 
-	pv := corev1.PersistentVolume{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: pvcName + "-pv",
-		},
-		Spec: corev1.PersistentVolumeSpec{
-			// Backup, garbage collection and file inspection must use the same
-			// node because hostPath directories are not shared between nodes.
-			NodeAffinity: &corev1.VolumeNodeAffinity{
-				Required: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{
-					MatchFields: []corev1.NodeSelectorRequirement{{
-						Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{nodes.Items[0].Name},
-					}},
-				}}},
-			},
-			StorageClassName: "manual",
-			Capacity: map[corev1.ResourceName]resource.Quantity{
-				corev1.ResourceStorage: *resource.NewQuantity(10, "Gi"),
-			},
-			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-			PersistentVolumeSource: corev1.PersistentVolumeSource{
-				HostPath: &corev1.HostPathVolumeSource{
-					Path: HostPathBasePath + pvcName,
-				},
-			},
-		},
-	}
+	pv, err := newHostPathPV(pvcName, nodes.Items[0])
+	require.NoError(t, err)
 
 	existingPV, err := c.PersistentVolumes().Get(context.Background(), pv.Name, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
-			_, err = c.PersistentVolumes().Create(context.Background(), &pv, metav1.CreateOptions{})
+			_, err = c.PersistentVolumes().Create(context.Background(), pv, metav1.CreateOptions{})
 			require.NoErrorf(t, err, "could not create PV")
 		} else {
 			require.NoErrorf(t, err, "could not retrieve PV")
@@ -994,6 +970,44 @@ func ensureHostPathPVC(t testing.TB, pvcName string) {
 			require.NoErrorf(t, err, "could not retrieve PVC")
 		}
 	}
+}
+
+// newHostPathPV returns the PV backing a test hostPath PVC, pinned to node by its
+// kubernetes.io/hostname label. PV node affinity is matched against node labels
+// (the scheduler's volume binding check passes only the node's labels), so a
+// metadata.name field selector would not restrict which node the pods using the
+// PVC run on.
+func newHostPathPV(pvcName string, node corev1.Node) (*corev1.PersistentVolume, error) {
+	hostname := node.Labels[corev1.LabelHostname]
+	if hostname == "" {
+		return nil, fmt.Errorf("node %s has no %s label to pin the hostPath PV to", node.Name, corev1.LabelHostname)
+	}
+	return &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: pvcName + "-pv",
+		},
+		Spec: corev1.PersistentVolumeSpec{
+			// Backup, garbage collection and file inspection must use the same
+			// node because hostPath directories are not shared between nodes.
+			NodeAffinity: &corev1.VolumeNodeAffinity{
+				Required: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+					MatchExpressions: []corev1.NodeSelectorRequirement{{
+						Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpIn, Values: []string{hostname},
+					}},
+				}}},
+			},
+			StorageClassName: "manual",
+			Capacity: map[corev1.ResourceName]resource.Quantity{
+				corev1.ResourceStorage: *resource.NewQuantity(10, "Gi"),
+			},
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: HostPathBasePath + pvcName,
+				},
+			},
+		},
+	}, nil
 }
 
 func deleteEtcdBackup(t testing.TB, ctx context.Context, c v1alpha1.OperatorV1alpha1Interface, backup *operatorv1alpha1.EtcdBackup) {
